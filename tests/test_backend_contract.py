@@ -8,6 +8,7 @@ from backend.server import (
     _coerce_form_bool,
     _condense_filename_text,
     _extract_lora_form_slots,
+    _generate_to_bytes,
     _get_generation_artifacts_root,
     _make_generation_filename,
     _safe_filename,
@@ -152,3 +153,63 @@ def test_generation_artifacts_save_audio_spectrograms_and_metadata(
     assert metadata["filename"] == "bad-name.wav"
     assert metadata["seed"] == 123
     assert metadata["prompt"] == "kick loop"
+
+
+class _FakeGenerationPipeline:
+    """Stands in for the SA3 pipeline: returns silence, accepts any kwargs
+    except the seam-tuning riders, which must be popped before generate()."""
+
+    model_config = {"sample_rate": 44100}
+
+    def generate(self, **kwargs):
+        import torch
+
+        assert "inpaint_feather_sec" not in kwargs
+        assert "inpaint_match_loudness" not in kwargs
+        return torch.zeros(1, 2, 44100)
+
+
+def _spy_composite(monkeypatch):
+    from backend.lib import inpaint_composite as ic
+
+    captured: dict = {}
+    real_composite = ic.composite_inpaint
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real_composite(*args, **kwargs)
+
+    monkeypatch.setattr(ic, "composite_inpaint", spy)
+    return captured
+
+
+def test_generate_to_bytes_pops_and_forwards_seam_tuning(monkeypatch):
+    torch = pytest.importorskip("torch")
+    captured = _spy_composite(monkeypatch)
+
+    args = {
+        "inpaint_audio": (44100, torch.zeros(2, 44100)),
+        "inpaint_mask_start_seconds": 0.25,
+        "inpaint_mask_end_seconds": 0.75,
+        "inpaint_feather_sec": 0.05,
+        "inpaint_match_loudness": False,
+    }
+    audio_bytes, fmt = _generate_to_bytes(_FakeGenerationPipeline(), args, "wav")
+    assert fmt == "wav"
+    assert audio_bytes
+    assert captured["feather_sec"] == 0.05
+    assert captured["match_loudness"] is False
+
+
+def test_generate_to_bytes_absent_tuning_uses_composite_defaults(monkeypatch):
+    torch = pytest.importorskip("torch")
+    captured = _spy_composite(monkeypatch)
+
+    args = {
+        "inpaint_audio": (44100, torch.zeros(2, 44100)),
+        "inpaint_mask_start_seconds": 0.25,
+        "inpaint_mask_end_seconds": 0.75,
+    }
+    _generate_to_bytes(_FakeGenerationPipeline(), args, "wav")
+    assert "feather_sec" not in captured
+    assert "match_loudness" not in captured

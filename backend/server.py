@@ -1308,6 +1308,12 @@ def _generate_to_bytes(
     import torch
     import torchaudio
 
+    # Seam-tuning riders travel in generate_args (they are per-job, copied
+    # per batch item) but parameterise the compositor, not the model — pop
+    # them before generate() unpacks the dict.
+    feather_sec = generate_args.pop("inpaint_feather_sec", None)
+    match_loudness = generate_args.pop("inpaint_match_loudness", None)
+
     if callback:
         generate_args["callback"] = callback
     audio = generation_pipeline.generate(**generate_args)
@@ -1335,6 +1341,11 @@ def _generate_to_bytes(
         from backend.lib.inpaint_composite import composite_inpaint
 
         in_sr, in_wave = inpaint_tuple
+        tuning: dict = {}
+        if feather_sec is not None:
+            tuning["feather_sec"] = float(feather_sec)
+        if match_loudness is not None:
+            tuning["match_loudness"] = bool(match_loudness)
         composited = composite_inpaint(
             in_wave.to(torch.float32).cpu().numpy(),
             audio.numpy(),
@@ -1342,6 +1353,7 @@ def _generate_to_bytes(
             mask_start_sec=float(mask_start),
             mask_end_sec=float(mask_end),
             generated_sample_rate=output_sample_rate,
+            **tuning,
         )
         audio = torch.from_numpy(composited)
         output_sample_rate = int(in_sr)
@@ -1567,6 +1579,8 @@ async def generate_jobs(
     custom_name: str = Form(""),
     mask_start: float = Form(0.0),
     mask_end: float = Form(0.0),
+    mask_feather_sec: Optional[float] = Form(None),
+    match_loudness: Optional[str] = Form(None),
     sampler_type: Optional[str] = Form(None),
     sigma_max: float = Form(1.0),
     duration_padding_sec: float = Form(6.0),
@@ -1698,6 +1712,12 @@ async def generate_jobs(
         if mask_start > 0 or mask_end > 0:
             base_args["inpaint_mask_start_seconds"] = float(mask_start)
             base_args["inpaint_mask_end_seconds"] = float(mask_end)
+        # Repaint seam tuning: absent fields fall through to
+        # composite_inpaint's own defaults (0.10 s feather, loudness on).
+        if mask_feather_sec is not None:
+            base_args["inpaint_feather_sec"] = max(0.0, float(mask_feather_sec))
+        if match_loudness is not None:
+            base_args["inpaint_match_loudness"] = _coerce_form_bool(match_loudness)
 
     job_id = str(uuid.uuid4())
     lora_paths, lora_weights, lora_temp_dir = await _persist_lora_uploads(

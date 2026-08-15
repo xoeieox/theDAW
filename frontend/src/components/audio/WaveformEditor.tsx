@@ -865,6 +865,9 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
   const [inpaintPrompt, setInpaintPrompt] = useState('');
   const [inpaintSteps, setInpaintSteps] = useState(8);
   const [inpaintSeed, setInpaintSeed] = useState(-1);
+  // Seam tuning (spec §7, tuned by ear): server defaults are 0.10 s / on.
+  const [inpaintFeatherSec, setInpaintFeatherSec] = useState(0.1);
+  const [inpaintMatchLoudness, setInpaintMatchLoudness] = useState(true);
 
   // Preload the chop worklet on the live engine context so a Chop insert builds
   // its real worklet node the first time playback starts (instead of one silent
@@ -961,6 +964,8 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
     fd.append('duration', String(clip.durationSec));
     fd.append('mask_start', String(Math.max(0, maskStart)));
     fd.append('mask_end', String(Math.min(clip.durationSec, maskEnd)));
+    fd.append('mask_feather_sec', String(inpaintFeatherSec));
+    fd.append('match_loudness', String(inpaintMatchLoudness));
     fd.append('inpaint_audio', new File([croppedAudio], 'inpaint.wav', { type: 'audio/wav' }));
     try {
       const res = await fetch('/api/generate-jobs', { method: 'POST', body: fd });
@@ -3732,6 +3737,37 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
                   className="flex-1 bg-black/40 border border-white/10 rounded px-2 py-0.5 text-[9px] font-mono text-zinc-200 outline-none focus:border-purple-500/50 transition-colors"
                   placeholder="-1 (random)"
                 />
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span
+                    className="text-[9px] font-mono text-zinc-500"
+                    title="Crossfade length at each seam, ramping inside the region. Below ~0.09s the fade lands inside the model's latent smear."
+                  >
+                    Seam feather
+                  </span>
+                  <span className="text-[9px] font-mono text-zinc-400">{inpaintFeatherSec.toFixed(3)}s</span>
+                </div>
+                <SlideTrack min={0} max={0.5} step={0.005} value={inpaintFeatherSec} defaultValue={0.1}
+                  onChange={(v) => setInpaintFeatherSec(v)} className="w-full" ariaLabel="Inpaint seam feather seconds" />
+              </div>
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-[9px] font-mono text-zinc-500"
+                  title="Scale the repaint to the original region's loudness (±6 dB clamp); skipped when the region is near-silent."
+                >
+                  Match loudness
+                </span>
+                <button
+                  onClick={() => setInpaintMatchLoudness((v) => !v)}
+                  className={`px-2 py-0.5 rounded border text-[9px] font-mono uppercase tracking-widest transition-colors ${
+                    inpaintMatchLoudness
+                      ? 'bg-purple-600/30 border-purple-500/40 text-purple-200'
+                      : 'bg-black/40 border-white/10 text-zinc-500'
+                  }`}
+                >
+                  {inpaintMatchLoudness ? 'on' : 'off'}
+                </button>
               </div>
               <button
                 onClick={() => void submitInpaint()}
