@@ -25,9 +25,6 @@ import { useLibraryStore } from '../../state/libraryStore';
 import { useVstStore } from '../../state/vstStore';
 import { useVstEditorStore } from '../../state/vstEditorStore';
 import { VstEmbedHost } from './VstEmbedHost';
-import { GanPluginStage } from './GanPluginStage';
-import { useGanStore } from '../../state/ganStore';
-import { registerAresBridge, ARES_XY_PAD_FALLBACK_ID } from '../../lib/aresBridge';
 import type { ChainEntry } from '../../state/effectChainStore';
 import type { Vst3PluginInfo } from '../../lib/vstClient';
 import { usePlaybackStore } from '../../state/playbackStore';
@@ -740,61 +737,6 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
     }
     if (entry) openVstEditor(entry, setMasterVstRawState);
   };
-  // The Ares .gan control-surface popup and the chain entry (track or master
-  // scope) it drives while open.
-  const [aresPanel, setAresPanel] = useState<{ scope: { kind: 'master' } | { kind: 'track'; trackId: string }; entryId: string } | null>(null);
-  const ganActiveUrl = useGanStore((s) => s.activeUrl);
-  const ganActiveName = useGanStore((s) => s.activeName);
-  // Open the Ares surface for a specific 'ares' chain entry: package the bundled
-  // .gan on first use, open it in the popup's GanPluginStage, and route its
-  // controls onto THAT entry's params (see the bridge effect below).
-  const openAresSurface = (scope: { kind: 'master' } | { kind: 'track'; trackId: string }, entry: ChainEntry) => {
-    setAresPanel({ scope, entryId: entry.id });
-    void (async () => {
-      if (!useGanStore.getState().plugins.some((p) => p.id === 'ares')) await useGanStore.getState().ensureAres();
-      await useGanStore.getState().openById('ares');
-    })();
-  };
-  const closeAresSurface = () => {
-    setAresPanel(null);
-    useGanStore.getState().close();
-  };
-  // While the popup is open, EDIT owns the ONE app-wide Ares bridge; closing it
-  // releases ownership (MIX re-registers its own bridge on mount).
-  useEffect(() => {
-    if (!aresPanel) return;
-    const { scope, entryId } = aresPanel;
-    return registerAresBridge({
-      getXyPadId: () => {
-        const ares = useGanStore.getState().plugins.find((pl) => pl.id === 'ares');
-        return ares?.controls.find((c) => c.name === 'ares_xy_kaoss_pad')?.id ?? ARES_XY_PAD_FALLBACK_ID;
-      },
-      findEntry: () => {
-        const st = useEditorStore.getState();
-        const chain = scope.kind === 'track'
-          ? st.tracks.find((t) => t.id === scope.trackId)?.fxChain ?? []
-          : st.masterFxChain;
-        return chain.find((e) => e.id === entryId) ?? null;
-      },
-      updateParams: (id, params) => {
-        const st = useEditorStore.getState();
-        if (scope.kind === 'track') st.updateTrackEffectParams(scope.trackId, id, params);
-        else st.updateMasterEffectParams(id, params);
-      },
-    });
-  }, [aresPanel]);
-  // Mirror the open panel into a ref so the unmount-only cleanup below can see
-  // whether the popup was still open when EDIT unmounted.
-  const aresPanelRef = useRef(aresPanel);
-  aresPanelRef.current = aresPanel;
-  // Switching center tabs unmounts EDIT with the popup still open; the panel
-  // state dies with the component and the bridge effect above unregisters
-  // itself, but the app-wide ganStore session would otherwise leak, so the
-  // Ares surface would hijack MIX's Effect Stage while bound to EDIT's entry.
-  // Run closeAresSurface's remaining teardown (the ganStore close) on unmount.
-  useEffect(() => () => {
-    if (aresPanelRef.current) useGanStore.getState().close();
-  }, []);
   const [instrPanel, setInstrPanel] = useState<{ clipId: string; x: number; y: number } | null>(null);
   const instrPanelRef = useRef<HTMLDivElement>(null);
   // Outside-click / Escape dismiss the clip-instrument popover. Deferred a
@@ -2741,7 +2683,6 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
                 projectBpm={projectBpm}
                 displayParams={(id) => fxDisplayParams({ kind: 'master' }, id)}
                 onOpenVst={(entry) => openVstEditor(entry, setMasterVstRawState)}
-                onOpenSurface={(entry) => openAresSurface({ kind: 'master' }, entry)}
               />
             </section>
           )}
@@ -2841,7 +2782,6 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
               projectBpm={projectBpm}
               displayParams={(id) => fxDisplayParams({ kind: 'track', trackId: t.id }, id)}
               onOpenVst={(entry) => openVstEditor(entry, (entryId, raw) => setTrackVstRawState(t.id, entryId, raw))}
-              onOpenSurface={(entry) => openAresSurface({ kind: 'track', trackId: t.id }, entry)}
             />
           </PopoverPortal>
         );
@@ -2882,29 +2822,6 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
         document.body,
       )}
 
-      {/* Ares control surface (floating popup); its .gan drives the picked
-          'ares' chain entry's params through the shared bridge while open. */}
-      {aresPanel && (
-        <div
-          className="fixed left-1/2 -translate-x-1/2 top-36 z-50 hardware-card bg-black/95 border border-indigo-500/30 rounded-lg shadow-2xl shadow-indigo-900/40 flex flex-col overflow-hidden"
-          style={{ width: 'min(720px, 92vw)', height: 'min(520px, 72vh)' }}
-        >
-          <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2 shrink-0">
-            <Blocks className="w-3.5 h-3.5 text-indigo-300" />
-            <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-300">Ares Surface</span>
-            <button
-              onClick={closeAresSurface}
-              aria-label="Close Ares surface"
-              className="ml-auto p-0.5 rounded text-zinc-500 hover:text-white hover:bg-white/10"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="flex-1 min-h-0">
-            <GanPluginStage url={ganActiveUrl} name={ganActiveName} />
-          </div>
-        </div>
-      )}
 
       {/* Automation lane panel (floating; while automation edit mode is on) */}
       {automationEdit && (

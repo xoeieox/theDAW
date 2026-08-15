@@ -23,7 +23,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 import webbrowser
 
 RESTART_EXIT_CODE = 88
@@ -181,48 +180,6 @@ def _wait_then_open_browser() -> None:
         _open_browser()
 
 
-def _warm_sidecars() -> None:
-    """Optionally pre-spawn the VJ dev server (:5187) once the backend is up.
-
-    OFF by default. Pre-warming spawns a SECOND full Vite/node process that then
-    stays resident for the whole session even if the VJ tab is never opened.
-    Opening the VJ tab calls /api/vj/url, which spawns it on demand anyway, so the
-    only cost of deferring is a few seconds on first VJ open. Set
-    ``THEDAW_PREWARM_VJ=1`` to restore eager warming (e.g. a VJ-first / live
-    performance launch)."""
-    prewarm = os.environ.get("THEDAW_PREWARM_VJ", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    if not prewarm:
-        _emit(
-            "stack",
-            "VJ sidecar: lazy (spawns on first VJ-tab open; "
-            "set THEDAW_PREWARM_VJ=1 to pre-warm)",
-        )
-        return
-    base = "http://127.0.0.1:8600"
-    deadline = time.time() + 120.0
-    while not _shutdown.is_set() and time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"{base}/api/health", timeout=2) as resp:
-                if resp.status == 200:
-                    break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if _shutdown.is_set():
-        return
-    try:
-        with urllib.request.urlopen(f"{base}/api/vj/url", timeout=120) as resp:
-            resp.read()
-        _emit("stack", "VJ sidecar warmed (dev server spawning on :5187)")
-    except Exception as exc:
-        _emit("stack", f"VJ sidecar warm-up skipped: {exc}")
-
-
 def main() -> int:
     # Drop the launcher console immediately so the user sees only the app, never
     # the log stream. It keeps running (restorable from the taskbar);
@@ -256,7 +213,6 @@ def main() -> int:
         _emit("stack", "localtunnel not installed — public link skipped")
 
     threading.Thread(target=_wait_then_open_browser, daemon=True).start()
-    threading.Thread(target=_warm_sidecars, daemon=True).start()
 
     # Backend supervisor on its own thread so Ctrl-C lands in main().
     backend = threading.Thread(target=_run_backend, args=(children,), daemon=True)

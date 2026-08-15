@@ -150,7 +150,7 @@ const emptyAssign = (): Record<SlideContent, AssignMap> => ({ audio: {}, visual:
 export const useSlideStore = create<SlideState>()(
   persist(
     (set) => ({
-      content: 'visual',
+      content: 'audio',
       view: 'row',
       profileId: DEFAULT_PROFILE_ID,
       autoDetect: true,
@@ -236,7 +236,6 @@ export const useSlideStore = create<SlideState>()(
     {
       name: 'thedaw-slide-v1',
       partialize: (s) => ({
-        content: s.content,
         view: s.view,
         profileId: s.profileId,
         autoDetect: s.autoDetect,

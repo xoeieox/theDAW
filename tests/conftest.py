@@ -53,12 +53,18 @@ def sa3_model(request):
     name = request.param
 
     if name in ("small-music", "small-sfx"):
-        return StableAudioModel.from_pretrained(name, device=ACCEL_DEVICE)
+        try:
+            return StableAudioModel.from_pretrained(name, device=ACCEL_DEVICE)
+        except Exception as e:  # noqa: BLE001 — weights are gated on HF
+            pytest.skip(f"{name} weights unavailable (gated / no HF token): {e}")
 
     if name == "medium":
         if not HAS_CUDA:
             pytest.skip("Medium model requires a CUDA GPU — none detected")
-        return StableAudioModel.from_pretrained("medium", device=ACCEL_DEVICE)
+        try:
+            return StableAudioModel.from_pretrained("medium", device=ACCEL_DEVICE)
+        except Exception as e:  # noqa: BLE001 — weights are gated on HF
+            pytest.skip(f"medium weights unavailable (gated / no HF token): {e}")
 
 
 @pytest.fixture(scope="session", params=list(ae_models))
@@ -71,7 +77,10 @@ def autoencoder(request):
     if name == "same-l" and not HAS_CUDA:
         pytest.skip(f"{name} requires a CUDA GPU — none detected")
 
-    return AutoencoderModel.from_pretrained(name, device=ACCEL_DEVICE)
+    try:
+        return AutoencoderModel.from_pretrained(name, device=ACCEL_DEVICE)
+    except Exception as e:  # noqa: BLE001 — weights are gated on HF
+        pytest.skip(f"{name} weights unavailable (gated / no HF token): {e}")
 
 
 @pytest.fixture

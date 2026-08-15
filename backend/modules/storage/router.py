@@ -559,34 +559,6 @@ async def _magenta_provider_status() -> dict:
         return _unavailable_provider("magenta", "Magenta RT2", str(e))
 
 
-def _suno_provider_status() -> dict:
-    try:
-        from backend.modules.suno.router import _read_api_key
-
-        key = _read_api_key()
-        configured = bool(key)
-        return {
-            "id": "suno",
-            "label": "Suno API",
-            "state": "ready" if configured else "needs_key",
-            "summary": "Cloud generation key is configured."
-            if configured
-            else "Paste a Suno API key to enable cloud generation.",
-            "active": configured,
-            "models": [
-                {
-                    "id": "suno-cloud",
-                    "label": "Suno cloud generation",
-                    "source": "api" if configured else "missing",
-                    "recommended": configured,
-                    "reason": (key[:12] + "...") if key else "API key required",
-                }
-            ],
-        }
-    except Exception as e:
-        return _unavailable_provider("suno", "Suno API", str(e))
-
-
 def _demucs_provider_status() -> dict:
     try:
         from backend.modules.stems.sidecar import probe
@@ -677,12 +649,11 @@ async def storage_model_status() -> dict:
     providers = [
         _stable_provider_status(),
         await _magenta_provider_status(),
-        _suno_provider_status(),
         _demucs_provider_status(),
         _midi_provider_status(),
     ]
     usable_generation = any(
-        p["id"] in {"stable", "magenta", "suno"} and p["state"] in {"active", "ready"}
+        p["id"] in {"stable", "magenta"} and p["state"] in {"active", "ready"}
         for p in providers
     )
     return {

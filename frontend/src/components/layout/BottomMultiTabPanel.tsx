@@ -9,12 +9,11 @@
 import React, { useState, lazy, Suspense } from 'react';
 import {
   Activity, Info, Piano, Layers, FolderOpen, SlidersVertical, ExternalLink, Maximize2, Minimize2,
-  FileMusic, Waves, Brush, Gauge,
+  Waves, Brush, Gauge,
 } from 'lucide-react';
 import { AdvancedVisualizer } from '../audio/AdvancedVisualizer';
 import { StepSequencer } from '../audio/StepSequencer';
 import { DetailsView } from './DetailsView';
-import { ScoreView } from './ScoreView';
 import { MediaBucketView } from './MediaBucketView';
 import { SlidePanel } from './SlidePanel';
 import { SwayPanel } from './SwayPanel';
@@ -26,7 +25,6 @@ const MidiPanel = lazy(() => import('./MidiPanel').then((m) => ({ default: m.Mid
 import { DrawPanel } from './DrawPanel';
 import { DetachableWindow } from './DetachableWindow';
 import { useBottomPanelStore, type BottomPanelTab } from '../../state/bottomPanelStore';
-import { useSlideStore } from '../../state/slideStore';
 
 const TAB_DEFS: Array<{ id: BottomPanelTab; label: string; desc: string; icon: React.ComponentType<{ className?: string }>; colorActive: string }> = [
   { id: 'levels',     label: 'Levels',     desc: 'Master loudness, peak, dynamics and stereo metering (LUFS / true-peak)',  icon: Gauge,      colorActive: 'border-teal-500 text-teal-300' },
@@ -34,7 +32,6 @@ const TAB_DEFS: Array<{ id: BottomPanelTab; label: string; desc: string; icon: R
   { id: 'midi',       label: 'MIDI',       desc: 'Piano roll: sing in, record or analyze notes, edit them, export MIDI',     icon: Piano,      colorActive: 'border-cyan-500 text-cyan-300' },
   { id: 'step-seq',   label: 'Sequence',   desc: 'Program drum and note patterns step by step on a grid',                    icon: Layers,     colorActive: 'border-cyan-500 text-cyan-300' },
   { id: 'draw',       label: 'DRAW',       desc: 'Draw to play generative music; record it to the library or EDIT',          icon: Brush,      colorActive: 'border-purple-500 text-purple-300' },
-  { id: 'score',      label: 'Score',      desc: 'Sheet music + tabs for the selection; convert and arrange notation',       icon: FileMusic,  colorActive: 'border-emerald-500 text-emerald-300' },
   { id: 'details',    label: 'Details',    desc: 'Metadata, prompt and analysis for the selected library item',              icon: Info,       colorActive: 'border-emerald-500 text-emerald-300' },
   { id: 'bucket',     label: 'Media',      desc: 'Drag-and-drop bucket for staging clips and media files',                   icon: FolderOpen, colorActive: 'border-amber-500 text-amber-300' },
   { id: 'slide',      label: 'SLIDE',      desc: 'Control surface: map sliders and pads to parameters',                      icon: SlidersVertical, colorActive: 'border-pink-500 text-pink-300' },
@@ -98,7 +95,6 @@ export const BottomMultiTabPanel: React.FC = () => {
         <div className="flex items-center gap-1 pr-2 shrink-0">
           {activeTab === 'slide' && (
             <>
-              <SlideContentToggle />
               <button
                 onClick={toggleSlideDetach}
                 className={`p-1 rounded border text-[9px] flex items-center gap-1 ${
@@ -162,11 +158,6 @@ export const BottomMultiTabPanel: React.FC = () => {
             <StepSequencer />
           </div>
         )}
-        {activeTab === 'score' && (
-          <div className="absolute inset-0">
-            <ScoreView />
-          </div>
-        )}
         {activeTab === 'bucket' && (
           <div className="absolute inset-0">
             <MediaBucketView />
@@ -209,35 +200,6 @@ export const BottomMultiTabPanel: React.FC = () => {
             )}
           </div>
         )}
-      </div>
-    </div>
-  );
-};
-
-/**
- * AUDIO / VISUAL content toggle for the SLIDE tab — hoisted into the tab row
- * (per the user's layout) instead of living inside the panel body. Drives
- * slideStore.content; AUDIO is emerald, VISUAL is pink to match the surface.
- */
-const SlideContentToggle: React.FC = () => {
-  const content = useSlideStore((s) => s.content);
-  const setContent = useSlideStore((s) => s.setContent);
-  const btn = 'px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] transition-colors';
-  return (
-    <div className="flex items-center pr-2 shrink-0">
-      <div className="flex rounded-md border border-white/10 overflow-hidden">
-        <button
-          onClick={() => setContent('audio')}
-          className={`${btn} ${content === 'audio' ? 'bg-emerald-500/15 text-emerald-200 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.5)]' : 'text-zinc-500 hover:text-zinc-200'}`}
-        >
-          Audio
-        </button>
-        <button
-          onClick={() => setContent('visual')}
-          className={`${btn} ${content === 'visual' ? 'bg-pink-500/15 text-pink-200 shadow-[inset_0_0_0_1px_rgba(236,72,153,0.5)]' : 'text-zinc-500 hover:text-zinc-200'}`}
-        >
-          Visual
-        </button>
       </div>
     </div>
   );

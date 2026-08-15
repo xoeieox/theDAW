@@ -15,8 +15,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSwayStore, SWAY_DIMS } from '../../state/swayBus';
 import { useSwayRoutingStore, loadSwayTargets } from '../../state/swayRouting';
-import { usePoseStore, POSE_CHANNELS } from '../../state/poseBus';
-import { usePoseRoutingStore } from '../../state/poseRouting';
 import type { BindableTarget } from '../surface/widgetTypes';
 import { useMidiTriggerStore, enableMidi } from '../../state/midiTriggerStore';
 import {
@@ -190,10 +188,6 @@ export const SwayPanel: React.FC = () => {
   const clearBinding = useSwayStore((s) => s.clearBinding);
   const routes = useSwayRoutingStore((s) => s.routes);
   const setRoute = useSwayRoutingStore((s) => s.setRoute);
-  const poseValues = usePoseStore((s) => s.values);
-  const poseActive = usePoseStore((s) => s.active);
-  const poseRoutes = usePoseRoutingStore((s) => s.routes);
-  const setPoseRoute = usePoseRoutingStore((s) => s.setRoute);
   const midiEnabled = useMidiTriggerStore((s) => s.enabled);
   const surfaceEnabled = useSwaySurfaceStore((s) => s.enabled);
   const setSurfaceEnabled = useSwaySurfaceStore((s) => s.setEnabled);
@@ -297,30 +291,6 @@ export const SwayPanel: React.FC = () => {
         </section>
 
         {/* Camera pose */}
-        <section>
-          <div className="flex items-center justify-between mb-1.5">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">Camera Pose</h3>
-            <span className={`text-[8px] font-mono uppercase tracking-widest ${poseActive ? 'text-cyan-400' : 'text-zinc-600'}`}>
-              {poseActive ? 'live' : 'enable GESTURE in the VJ'}
-            </span>
-          </div>
-          <div className="space-y-1">
-            {POSE_CHANNELS.map((c) => (
-              <div key={c.id} className="flex items-center gap-1.5 rounded border border-white/10 bg-white/3 px-1.5 py-1">
-                <span className="w-16 shrink-0 text-[10px] font-bold uppercase tracking-wider text-cyan-200">{c.label}</span>
-                <Meter value={poseValues[c.id] ?? 0} accent="cyan" />
-                <RouteSelect
-                  id={`pose-route-${c.id}`}
-                  label={c.label}
-                  value={poseRoutes[c.id] ?? ''}
-                  groups={groups}
-                  accent="cyan"
-                  onChange={(v) => setPoseRoute(c.id, v)}
-                />
-              </div>
-            ))}
-          </div>
-        </section>
       </div>
 
       {/* DAW control surface: mirror the Sway hardware onto theDAW's EDIT mixer,

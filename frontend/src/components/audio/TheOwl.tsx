@@ -22,9 +22,6 @@
 import { useEffect, useRef } from 'react';
 import { SlideTrack } from './SlideTrack';
 import { SPATIAL_MOTIONS } from '../../lib/rackEffects';
-import { ContextMenu, useContextMenu } from '../ui/ContextMenu';
-import { ganApi } from '../../lib/ganClient';
-import { logInfo, logError } from '../../state/logStore';
 
 interface TheOwlProps {
   params: Record<string, number>;
@@ -63,18 +60,6 @@ export function TheOwl({ params, onChange, idPrefix }: TheOwlProps) {
 
   const set = (key: string, value: number) => onChange({ ...params, [key]: value });
 
-  // Right-click the interface -> package + reveal the sidecar .gan (VST-style).
-  const menu = useContextMenu<true>();
-  const revealGan = async () => {
-    try {
-      const r = await ganApi.packageOwl();
-      await ganApi.reveal(r.gan_path);
-      logInfo('plugin', `The Owl packaged + revealed: ${r.gan_path}`);
-    } catch (e) {
-      logError('plugin', `Reveal .gan failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
   // The canvas panels postMessage their values; bridge them onto the params.
   // Use refs so the listener always reads the latest params/onChange.
   const paramsRef = useRef(params);
@@ -108,7 +93,6 @@ export function TheOwl({ params, onChange, idPrefix }: TheOwlProps) {
     <div
       className="relative h-full w-full bg-[#07080c] overflow-hidden flex items-center justify-center select-none"
       style={{ containerType: 'size' }}
-      onContextMenu={(e) => menu.open(e, true)}
     >
       {/* Letterbox the surface to the artwork's native 1672:941 so the PNG is
           never stretched: the box grows to the largest 1672:941 rectangle that
@@ -192,12 +176,6 @@ export function TheOwl({ params, onChange, idPrefix }: TheOwlProps) {
           );
         })}
       </div>
-      <ContextMenu
-        position={menu.position}
-        onClose={menu.close}
-        title="The Owl · .gan"
-        items={[{ type: 'item', label: 'Reveal .gan in folder', onSelect: () => void revealGan() }]}
-      />
     </div>
   );
 }

@@ -11,7 +11,6 @@ import { useLayoutPrefs, UI_SCALE_MIN, UI_SCALE_MAX } from '../../state/layoutPr
 import { SlideTrack } from '../audio/SlideTrack';
 import { PathInput } from '../ui/PathInput';
 import { InfoTip } from '../ui/Tooltip';
-import { useSunoStore } from '../../suno/sunoStore';
 import { useModuleStore, type ModuleConfig } from '../../state/moduleStore';
 import { useDownloadStore } from '../../state/downloadStore';
 
@@ -692,10 +691,9 @@ const modelTooltip = (model: ModelOptionStatus) => [
   model.reason || null,
 ].filter(Boolean).join('\n');
 
-/** A provider card — two lines max: name + state, then model chips (or, for
- *  Suno, an inline API-key input). The long summary lives in the hover title. */
+/** A provider card — two lines max: name + state, then model chips. The long
+ *  summary lives in the hover title. */
 const ModelProviderCard: React.FC<{ provider: ModelProviderStatus }> = ({ provider }) => {
-  const isSuno = provider.id === 'suno';
   const models = provider.models ?? [];
   const ordered = [...models].sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)));
   const visible = ordered.slice(0, 3);
@@ -706,16 +704,14 @@ const ModelProviderCard: React.FC<{ provider: ModelProviderStatus }> = ({ provid
   const downloadJobs = useDownloadStore((s) => s.jobs);
   const startDownload = useDownloadStore((s) => s.startDownload);
   return (
-    <article className={`min-w-0 rounded border border-white/8 bg-white/3 px-1.5 py-1 ${isSuno ? 'col-span-2' : ''}`} title={provider.summary}>
+    <article className="min-w-0 rounded border border-white/8 bg-white/3 px-1.5 py-1" title={provider.summary}>
       <div className="flex items-center gap-1.5">
         <span className="text-[10px] font-bold text-zinc-100 truncate flex-1 min-w-0">{provider.label}</span>
         <span className={`shrink-0 rounded border px-1 py-px text-[9px] font-mono uppercase tracking-wide ${modelStateClass(provider.state)}`}>
           {MODEL_STATE_LABELS[provider.state] ?? provider.state}
         </span>
       </div>
-      {isSuno ? (
-        <div className="mt-1"><SunoKeyInput /></div>
-      ) : visible.length > 0 ? (
+      {visible.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-1">
           {visible.map((model) => {
             const isDownloadable = provider.id === 'stable' && model.source === 'download';
@@ -754,78 +750,6 @@ const ModelProviderCard: React.FC<{ provider: ModelProviderStatus }> = ({ provid
   );
 };
 
-/** Inline Suno API-key field, rendered inside the Suno provider card. */
-const SunoKeyInput: React.FC = () => {
-  const [configured, setConfigured] = useState(false);
-  const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
-  const [val, setVal] = useState('');
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const refresh = React.useCallback(async () => {
-    try {
-      const r = await fetch('/api/suno/status');
-      const d = await r.json();
-      setConfigured(!!d.configured);
-      setKeyPrefix(d.key_prefix ?? null);
-    } catch {
-      setConfigured(false);
-    }
-  }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  const save = async () => {
-    if (!val.trim()) return;
-    setBusy(true);
-    setSaved(false);
-    try {
-      const r = await fetch('/api/suno/key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: val.trim() }),
-      });
-      if (r.ok) {
-        setVal('');
-        setSaved(true);
-        await refresh();
-        void useSunoStore.getState().checkStatus();
-        window.setTimeout(() => setSaved(false), 2000);
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <label htmlFor="suno-api-key" className="sr-only">Suno API key</label>
-      <div className="relative flex-1 min-w-0">
-        <input
-          id="suno-api-key"
-          name="suno-api-key"
-          type={show ? 'text' : 'password'}
-          autoComplete="off"
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
-          placeholder={configured ? `Connected · ${keyPrefix ?? ''} — paste to replace` : 'sk_live_…  (platform.suno.com)'}
-          className="w-full bg-black/40 border border-white/10 rounded px-1.5 py-1 pr-6 text-[9px] font-mono text-zinc-200 outline-none focus:border-purple-500/50"
-        />
-        <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide key' : 'Show key'}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300">
-          {show ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-        </button>
-      </div>
-      <button type="submit" disabled={busy || !val.trim()}
-        title="Save the key to the backend and reconnect cloud generation"
-        className="shrink-0 px-2 rounded border border-purple-500/40 bg-purple-500/15 hover:bg-purple-500/25 disabled:opacity-40 text-purple-200 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
-        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : saved ? <CheckCircle2 className="w-3 h-3" /> : 'Save'}
-      </button>
-    </form>
-  );
-};
-
-/* ── Edit Layout (global surface prefs) ───────────────────────────────────── */
 const LayoutSettingsSection: React.FC = () => {
   const fillMode = useLayoutPrefs((s) => s.fillMode);
   const gapPx = useLayoutPrefs((s) => s.gapPx);

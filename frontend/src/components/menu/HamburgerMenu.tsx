@@ -4,9 +4,7 @@ import {
   BookOpen,
   Compass,
   FilePlus2,
-  FolderInput,
   FolderOpen,
-  Headset,
   History,
   Home,
   LayoutGrid,
@@ -18,14 +16,12 @@ import {
 } from 'lucide-react';
 import { BackupModal } from './BackupModal';
 import { UpdateModal } from './UpdateModal';
-import { QuestDeployModal } from './QuestDeployModal';
 import { ThemeModal } from './ThemeModal';
 
 export interface HamburgerMenuProps {
   onNewProject: () => void;
   onOpenProject: () => void;
   onSaveProject: () => void;
-  onImportDawProject: () => void;
   onToggleEditLayout: () => void;
   editLayoutActive: boolean;
   onOpenSettings: () => void;
@@ -68,7 +64,6 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
   onNewProject,
   onOpenProject,
   onSaveProject,
-  onImportDawProject,
   onToggleEditLayout,
   editLayoutActive,
   onOpenSettings,
@@ -80,7 +75,6 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
   const [backupOpen, setBackupOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateShowsReleases, setUpdateShowsReleases] = useState(false);
-  const [questOpen, setQuestOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -93,7 +87,6 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
         { id: 'new-project', label: 'New Project', icon: FilePlus2, iconCls: 'text-sky-300', onSelect: onNewProject },
         { id: 'open-project', label: 'Open Project', icon: FolderOpen, iconCls: 'text-sky-300', onSelect: onOpenProject },
         { id: 'save-project', label: 'Save Project', icon: Save, iconCls: 'text-sky-300', onSelect: onSaveProject },
-        { id: 'import-daw', label: 'Import DAW Project', icon: FolderInput, iconCls: 'text-sky-300', onSelect: onImportDawProject },
       ],
     },
     {
@@ -125,18 +118,6 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
             setUpdateShowsReleases(true);
             setUpdateOpen(true);
           },
-        },
-      ],
-    },
-    {
-      label: 'Devices',
-      items: [
-        {
-          id: 'deploy-quest',
-          label: 'Deploy to Quest',
-          icon: Headset,
-          iconCls: 'text-sky-300',
-          onSelect: () => setQuestOpen(true),
         },
       ],
     },
@@ -291,7 +272,6 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
         onClose={() => setUpdateOpen(false)}
         initialShowReleases={updateShowsReleases}
       />
-      <QuestDeployModal open={questOpen} onClose={() => setQuestOpen(false)} />
       <ThemeModal open={themeOpen} onClose={() => setThemeOpen(false)} />
     </div>
   );

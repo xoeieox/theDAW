@@ -2,53 +2,85 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Overview
+
+**theDAW — the Operating Table.** A fork of gantasmo/theDAW (itself a fork of
+Stability AI's stable-audio-3 repo), stripped to one job: a timeline you lay
+audio out on, where AI tools sit alongside ordinary editing as peers, and where
+pointing a tool at a *region* of a clip and having it repainted — with the
+audio outside the region untouched and the seam inaudible — is the central
+gesture. Region repaint is backed by Stable Audio 3 audio inpainting with
+composite-and-feather applied server-side (`backend/lib/inpaint_composite.py`).
+
+Deliberately **not** a studio: the DJ / VJ / XR / plugin-foundry / notation /
+distribution surfaces of upstream were removed on the `operating-table` branch.
+`main` tracks upstream `gantasmo/theDAW` as a clean mirror. Do not reintroduce
+live-performance features; the sibling "Modular Glitch Lab" project owns those.
+
+The five workspaces: **MAKE** (generation), **EDIT** (the timeline — the
+operating table), **MIX** (effect chain + mastering), **UNDERFIT** (LoRA
+training), **LEARN** (library lineage graph). The library bin (side panel) is
+the accumulation surface: SQLite entries + analysis + stems + MIDI + lineage.
+
+### Architecture in one paragraph
+
+The live audio engine is **browser Web Audio** (`frontend/src/state/liveMixer.ts`)
+— nothing outside the browser can be in the live signal path; offline render
+and track freeze is the sanctioned answer for server-side processing. The
+backend is FastAPI on **:8600** (`backend/server.py`) with a plugin module
+system (`backend/modules/loader.py` discovers `modules/*/module.json`; a module
+that fails to import is logged and skipped). The generation model is Stable
+Audio 3 loaded in-process from `stable_audio_3/` — the live serving class is
+`StableAudioModel` in `stable_audio_3/model.py`. The frontend is React + Vite;
+when `frontend/dist` exists the backend serves it at `/`, so one process on
+:8600 is the whole app.
+
+### The inpaint path (the core of this fork)
+
+- Frontend region select: `InpaintSelection` in `frontend/src/state/editorStore.ts`;
+  submit crops the clip and posts to `/api/generate-jobs` (`WaveformEditor.tsx`).
+- Backend: `/api/generate-jobs` → `_generate_to_bytes` in `backend/server.py` —
+  the single choke point for all generation. Inpaint requests composite the
+  model output back into the original audio with an equal-power feather
+  (`backend/lib/inpaint_composite.py`) and return float32 WAV.
+- Everything outside the selected region must stay **bit-identical** to the
+  input. `tests/test_inpaint_composite.py` asserts this; do not weaken it.
+
 ## 🚨 HARD RULES — read before touching anything 🚨
 
 These are non-negotiable. Violating them has burned the user before.
 
 ### 1. NEVER downgrade external models, APIs, libraries, or capabilities
-Your training cutoff is older than the user's reality. The user is a
-working developer with access to the latest releases — Gemini 3.5,
-Claude 4.x, GPT-5 variants, whatever's actually current. If a model
-name, API endpoint, library version, or product feature looks unfamiliar
-or "doesn't exist," **assume YOUR knowledge is stale, not theirs**.
+Your training cutoff is older than the user's reality. If a model name, API
+endpoint, library version, or product feature looks unfamiliar or "doesn't
+exist," **assume YOUR knowledge is stale, not theirs**.
 
 Concrete rules:
-- **Do NOT remove model entries** from catalogs (e.g. `GEMINI_MODELS`,
-  Claude/OpenAI/Grok caps maps in `backend/assistant_routes.py`)
-  because you don't recognize them.
-- **Do NOT pin libraries down** to versions you "know" exist when a
-  newer one is in the lockfile.
-- **Do NOT replace a "preview" / "experimental" / "-latest" model id**
-  with a stable one you remember from training.
-- **If you genuinely need to update a model list**, fetch the source
-  of truth FIRST (WebFetch on `https://ai.google.dev/gemini-api/docs/models`,
-  `https://docs.anthropic.com/en/docs/about-claude/models`,
-  `https://platform.openai.com/docs/models`, etc.) — never write from
-  memory. Then if you're proposing a downgrade, ASK the user first and
-  let them confirm.
-
-If you accidentally do downgrade, immediately fetch the docs and
-restore the full catalog.
+- **Do NOT remove model entries** from catalogs (e.g. the caps maps in
+  `backend/assistant_routes.py`) because you don't recognize them.
+- **Do NOT pin libraries down** to versions you "know" exist when a newer one
+  is in the lockfile.
+- **Do NOT replace a "preview" / "experimental" / "-latest" model id** with a
+  stable one you remember from training.
+- **If you genuinely need to update a model list**, fetch the source of truth
+  FIRST — never write from memory. If you're proposing a downgrade, ASK first.
 
 ### 2. NEVER allow ruff version drift
-Exactly ONE ruff version exists in this repo's tooling chain at all
-times. It's pinned in `pyproject.toml` (`dependency-groups.dev`) AND
+Exactly ONE ruff version exists in this repo's tooling chain at all times.
+It's pinned in `pyproject.toml` (`dependency-groups.dev`) AND
 `.github/workflows/lint.yml` (the `RUFF_VERSION` env var) AND used via
-`uv run ruff …` so the project venv's ruff is what runs. Symptoms of a
-violation: `ruff format --check` complains about reformatting files
-that were clean last commit, with no semantic edits in between.
+`uv run ruff …` so the project venv's ruff is what runs.
 
 Concrete rules:
-- **Never `pip install ruff` or `pipx install ruff`** globally without
-  matching the pinned version exactly.
-- **Never edit only one of the two pin sites** — always update both in
-  the same commit.
+- **Never `pip install ruff` or `pipx install ruff`** globally without matching
+  the pinned version exactly.
+- **Never edit only one of the two pin sites** — always update both in the
+  same commit, then run `uv sync --group dev` + `uv run ruff format .` in that
+  same commit.
 - **Before committing**, run `uv run ruff check .` AND
   `uv run ruff format --check .` from the repo root. Both must pass.
-- **If `ruff format` drifts** after a session where nothing semantic
-  changed, the FIRST suspect is a version mismatch — investigate
-  before you "fix" the drift.
+- **If `ruff format` drifts** with no semantic edits in between, the FIRST
+  suspect is a version mismatch — investigate before you "fix" the drift.
 
 ### 3. Form controls MUST have real labels and valid ARIA
 Every form/control change must include an accessibility check before it is
@@ -59,21 +91,11 @@ Concrete rules:
   `name` values, plus either `<label htmlFor="that-id">` or a valid wrapping
   `<label>`.
 - Custom controls (`div role="slider"`, button-based selects/dropdowns,
-  canvas/WebGL pickers, etc.) must **not** be wrapped in `<label>` because
-  browsers do not associate that label with non-native controls.
-- Custom controls must use `aria-label` or `aria-labelledby`; button dropdowns
-  must also expose state/relationship where applicable (`aria-expanded`,
-  `aria-haspopup`, `aria-controls`, `role="listbox"` / `role="option"`).
-- When touching form UI, sweep nearby code for `<label` and custom controls so
-  existing invalid patterns are fixed, not copied.
-- Never silence, suppress, or ignore accessibility warnings; fix the DOM
-  relationship that caused the warning.
-
-See the `## Ruff Configuration` section below for more detail.
-
-## Project Overview
-
-Stable Audio 3 is a text-conditioned audio generation system. It generates audio from text prompts using a two-stage architecture: a DiT (diffusion transformer) generates latents, then the SAME autoencoder decodes them to 44.1kHz stereo audio.
+  canvas/WebGL pickers, etc.) must **not** be wrapped in `<label>`; use
+  `aria-label` or `aria-labelledby`, and expose state/relationship where
+  applicable (`aria-expanded`, `aria-haspopup`, `aria-controls`,
+  `role="listbox"` / `role="option"`).
+- Never silence accessibility warnings; fix the DOM relationship instead.
 
 ## Commands
 
@@ -81,95 +103,67 @@ Stable Audio 3 is a text-conditioned audio generation system. It generates audio
 # Install dependencies
 uv sync --group dev
 
-# Launch the app (Windows: bootstraps deps on first run, then runs backend + frontend in ONE console)
-.\theDAW.bat
-
-# Or launch the two dev servers manually (any OS)
+# Launch the two dev servers
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8600 --reload   # backend  -> :8600
-cd frontend && npm run dev                                             # frontend -> :5173
+cd frontend && npm run dev                                              # frontend -> :5173
 
-# Run tests (requires model weights downloaded)
+# Production shape: build once, serve everything from :8600
+cd frontend && npm run build      # backend mounts frontend/dist at / when present
+
+# Run tests (model-dependent tests skip without weights/GPU)
 uv run pytest
 
-# Run single test file
-uv run pytest tests/test_inference.py
+# Type-check the frontend
+cd frontend && npx tsc --noEmit
 
-# Run tests and save generated audio for inspection
-uv run pytest --save-audio
-
-# Lint (runs on CI for PRs)
-uv run ruff check
-uv run ruff format --check
+# Lint (runs on CI for PRs; tests run on CI too — .github/workflows/test.yml)
+uv run ruff check .
+uv run ruff format --check .
 ```
 
-## Architecture
+## Stable Audio 3 internals (`stable_audio_3/`)
 
-### Two-Stage Pipeline
-
-1. **SAME Autoencoder** (`models/autoencoders.py`) — Compresses 44.1kHz stereo audio to 256-dim continuous latents at 4096x downsampling. Two variants: SAME-S (266M, CPU-capable, chunked attention) and SAME-L (1.7B, GPU-required, sliding window attention).
-
-2. **DiT** (`models/dit.py` → `models/transformer.py`) — Conditional diffusion transformer that generates SAME latents. Uses T5Gemma text conditioning, duration embeddings, and optional inpainting inputs. Three sizes: Small (433M), Medium (1.4B), Large (2.7B, API-only).
-
-### Key Files
-
-- `pipeline.py` — Public API. `StableAudioPipeline` and `AutoencoderPipeline` classes. All inference flows go through `generate()`.
-- `model.py` — Model construction from config JSON. `create_diffusion_cond_from_config()` builds the full model graph.
-- `model_configs.py` — Maps model names ("small", "medium", "medium-rf") to HuggingFace repo IDs and checkpoint filenames.
-- `loading_utils.py` — Loads safetensor checkpoints, handles state dict key remapping between ARC/RF/standalone formats.
-- `inference/sampling.py` — All samplers: Euler, RK4, DPM++, Ping-Pong. `sample_diffusion()` is the unified entry point.
-- `inference/distribution_shift.py` — Timestep schedule warping (Flux shift, LogSNR shift).
-- `models/conditioners.py` — `T5GemmaConditioner` loads `google/t5gemma-b-b-ul2` for text encoding. `NumberConditioner` for duration.
-- `models/lora/` — LoRA implementation: parametrization, loading, stacking multiple LoRAs, per-layer filtering, interval-based activation.
-
-### Model Checkpoint Types
-
-| Key | Type | Purpose |
-|-----|------|---------|
-| `small`, `medium` | ARC | Primary inference (post-trained, 8-step) |
-| `small-rf`, `medium-rf` | RF | Base checkpoints for LoRA training |
-| `same-s`, `same-l` | Autoencoder | Standalone encode/decode without DiT |
-
-ARC and RF checkpoints bundle the autoencoder inside. Standalone SAME checkpoints share weights with the bundled versions and will reuse cached full checkpoints when available.
-
-### CFG and Guidance
-
-The DiT handles classifier-free guidance internally via batch doubling (`batch_cfg=True`). It also supports APG (Adaptive Projected Guidance) which projects the CFG diff orthogonal to the denoised prediction. ARC models default to `cfg_scale=1` (no guidance needed); RF models use `cfg_scale=7`.
-
-### Variable-Length Generation
-
-The model supports variable-length sequences without wasting compute on padding. Duration determines the latent sequence length directly. `mask_padding_attention=True` creates attention masks so padding positions don't corrupt valid content. Distribution shift warps the timestep schedule based on effective sequence length.
+- `model.py` — **the live serving file**: `StableAudioModel.from_pretrained` /
+  `.generate()`. The backend loads it at `backend/server.py`
+  (`_get_or_load_generation_pipeline`). There is no `pipeline.py` — it was a
+  dead line-shifted twin and was deleted; do not resurrect it or patch against
+  upstream's copy.
+- `model_configs.py` — maps model names ("small", "medium", "medium-rf") to
+  HuggingFace repo IDs and checkpoint filenames.
+- `inference/sampling.py` — samplers (Euler, RK4, DPM++, Ping-Pong);
+  `sample_diffusion()` is the unified entry point. Contains no inpaint logic.
+- `models/conditioners.py` — T5Gemma text conditioning (the encoder ships
+  inside the SA3 HF repo as a subfolder; nothing fetches `google/t5gemma`).
+- `models/lora/` — LoRA loading/stacking (the UNDERFIT trainer's runtime half).
+- Two-stage pipeline: the SAME autoencoder compresses 44.1kHz stereo to
+  256-dim latents at **4096x downsampling** (≈93 ms per latent frame at
+  44.1 kHz — this is why the inpaint feather default is 0.10 s), and a DiT
+  generates those latents from text + duration + optional inpaint conditioning.
+- ARC checkpoints (`small`, `medium`) are the 8-step post-trained primaries
+  (`cfg_scale=1`); RF checkpoints are the LoRA-training bases (`cfg_scale=7`).
+- Weights are gated on HuggingFace: `medium` requires an accepted licence +
+  token (env `HF_TOKEN` wins over the stored token file — see
+  `backend/modules/hfauth/`). Never commit a token into this repo.
 
 ## Ruff Configuration
 
-> ⚠️ **HARD RULE — RUFF VERSION:** Ruff is pinned to ONE exact version
-> in TWO places: `pyproject.toml` (`dependency-groups.dev`) and
-> `.github/workflows/lint.yml` (`RUFF_VERSION` env var). **NEVER allow
-> these to drift, NEVER downgrade, NEVER install an older ruff
-> "because it's still compatible," and NEVER let two ruff versions
-> coexist anywhere in this repo's tooling chain.** Upgrading is fine —
-> bump BOTH places in the SAME commit, then run `uv sync --group dev`
-> and `uv run ruff format .` in that same commit. If `ruff format
-> --check .` reports drift after the user reports a working tree was
-> previously clean, the FIRST thing to check is whether a different
-> ruff (older, newer, system-wide, pipx) snuck into the resolution
-> chain. Do NOT mask the issue by reformatting against a stale ruff.
-
-Ruff excludes `stable_audio_3/models`, `stable_audio_3/inference`, `stable_audio_3/interface`, and `stable_audio_3/data` from linting. Only top-level files (`pipeline.py`, `model.py`, `model_configs.py`, `loading_utils.py`, `verbose.py`) are checked.
-
-**Always run from the repo root, never on a subset of dirs:**
-```
-uv run ruff check .
-uv run ruff format .
-```
-CI runs at the repo root, so `ruff format backend/ tests/` alone will silently miss `stable_audio_3/*.py` drift. Local-dev workflow: run BOTH commands above before every commit; the pre-commit chain checks both.
+Ruff excludes `stable_audio_3/{models,inference,interface,data,training}`,
+`sidecars/magenta-rt2-nvidia`, `underfit`, and `integration-package` (vendored
+code keeps its own style). **Always run from the repo root, never on a subset
+of dirs** — CI runs at the root, so a partial run silently misses drift.
 
 ## Testing
 
-Tests use session-scoped fixtures to avoid reloading models. The `model_pipe` fixture is parametrized over `["small", "medium"]` — medium tests are auto-skipped without a CUDA GPU. `--save-audio` writes outputs to `test_audio_outputs/` for manual listening.
+Tests run on every PR (`.github/workflows/test.yml`). Model-dependent tests
+use session-scoped fixtures and auto-skip without weights/GPU;
+`tests/test_inpaint_composite.py` is pure numpy and must always pass. The
+bit-identity assertion (outside the repainted region, output == input exactly)
+is the contract of this fork — treat a change that breaks it as a defect, not
+a tolerance to loosen.
 
 ## Tailwind CSS v4 — Mandatory Class Forms
 
-This project uses **Tailwind CSS v4**. The following v3 forms are forbidden and will cause VS Code Problems tab warnings. Never write them; always use the v4 canonical form instead.
+This project uses **Tailwind CSS v4**. The following v3 forms are forbidden.
 
 | FORBIDDEN (v3) | REQUIRED (v4) |
 |---|---|
@@ -185,32 +179,13 @@ This project uses **Tailwind CSS v4**. The following v3 forms are forbidden and 
 | `min-h-[80px]` when scale token exists | `min-h-20` |
 | `bg-white/[0.03]`, `bg-purple-500/[0.04]` | `bg-white/3`, `bg-purple-500/4` |
 
-**Scale token rule:** Tailwind v4 spacing scale is `value ÷ 4`. A `[Npx]` arbitrary value maps to `N/4` as a scale token whenever N is divisible by 4 (or to the nearest 0.5 step). Prefer scale tokens over arbitrary values at all times.
-
-**Before writing any className string, mentally check it against this table.**
-
-## Windows-Specific Setup
-
-`pyproject.toml` maps the CUDA wheels per-platform under `[tool.uv.sources]`
-(Linux x86_64 → cu126, Windows → cu128), so `uv sync` on Windows installs the
-right stack automatically:
-- torch + torchaudio come from the cu128 index (no manual `--index-url` step)
-- `soundfile` is a base dependency (torchaudio's Windows backend), installed by `uv sync`
-- Flash Attention installs from the pinned `kingbri1` cu128/cp310 wheel, gated to `sys_platform == 'win32' and python_version < '3.11'` (so the venv must be Python 3.10; `.python-version` pins it)
-- `theDAW.bat` preflights prerequisites and invokes `install/setup.ps1` for consent-based tool installation when something is missing; `docs/windows/setup-guide.md` has the full walkthrough and fallbacks
+**Scale token rule:** the v4 spacing scale is `value ÷ 4`. Prefer scale tokens
+over arbitrary values at all times.
 
 ## RAG Index Maintenance
 
 The in-app assistant answers from a RAG index built over the docs listed in
-`backend/rag.py` (`DOC_PATHS`). Keep it current:
-
-- **After any major update** — a new feature, tab, subsystem, or behavior change
-  that a user could ask about — update the RAG: write/revise the relevant doc
-  AND register it in `DOC_PATHS` if it's new. Stale or missing docs degrade the
-  assistant's answers.
-- **Run a regular sanity check / maintenance pass:** confirm every `DOC_PATHS`
-  entry resolves (no missing-doc warnings on startup) and flag docs that have
-  drifted from the current UI/behavior.
-- **All doc/RAG changes, updates, and deletions are approval-based.** Research
-  autonomously (read, diff, identify drift) and propose, but wait for approval
-  before editing or deleting. Never auto-delete docs.
+`backend/rag.py` (`DOC_PATHS`). After any major update, write/revise the
+relevant doc AND register it in `DOC_PATHS` if new. Confirm every `DOC_PATHS`
+entry resolves (no missing-doc warnings on startup). All doc/RAG changes are
+approval-based — propose, don't auto-edit or auto-delete.

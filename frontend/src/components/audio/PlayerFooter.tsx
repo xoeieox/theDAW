@@ -7,17 +7,6 @@ import { useLibraryStore } from '../../state/libraryStore';
 import { useAppUiStore } from '../../state/appUiStore';
 import { callEditorPlay, isEditorPlaybackRegistered } from '../../state/editorPlaybackBridge';
 import { SlideTrack } from './SlideTrack';
-import {
-  toggleVjPlayback,
-  subscribeToVjPlaybackState,
-  type VjPlaybackState,
-} from '../../state/vjPlaybackBus';
-import { useVjSetStatusStore } from '../../state/vjSetStatusStore';
-import {
-  toggleDjMaster,
-  subscribeDjMasterState,
-  type DjMasterState,
-} from '../../state/djMasterBus';
 
 const formatDuration = (sec: number | null | undefined): string => {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return '--:--';
@@ -80,7 +69,6 @@ export const PlayerFooter: React.FC = () => {
   // the first play click triggers an offline render into playerStore.
   // After that, all transport (seek, skip, loop, volume) works natively.
   const activeView = useAppUiStore((s) => s.activeView);
-  const centerTab = useAppUiStore((s) => s.centerTab);
   const inEditorMode = activeView === 'edit' && isEditorPlaybackRegistered();
 
   // Volume → master gain (continuous).
@@ -102,68 +90,16 @@ export const PlayerFooter: React.FC = () => {
     }
   }, [hasTrack, lastFilename, load]);
 
-  // VJ playback state — when the user is on the VJ tab, the play
-  // button controls the VJ iframe's video element instead of (or in
-  // addition to) the SA3 player engine. The vjPlaybackBus signals
-  // whether a handler is registered (VJ tab mounted) and the latest
-  // playing/paused echo from the iframe.
-  const [vjState, setVjState] = useState<VjPlaybackState>('unknown');
-  useEffect(() => subscribeToVjPlaybackState(setVjState), []);
-  // On the DJ and VJ tabs the footer's central PLAY is the MASTER / live
-  // transport (drives the VJ performance via the playback bus), so there's one
-  // obvious master control instead of a separate "Play Live" button. VJ tab
-  // lives in centerTab (not the legacy activeView enum). Don't gate on handler
-  // registration: while the iframe boots, the footer should still present the
-  // live transport rather than a disabled audio-only state.
-  const isVjMode = centerTab === 'vj' || centerTab === 'dj';
-  const isDjMode = centerTab === 'dj';
-
-  // DJ master transport — the footer ▶ drives the DJ decks/set (not the global
-  // single-track player) while on the DJ tab.
-  const [djMaster, setDjMaster] = useState<DjMasterState>('paused');
-  useEffect(() => subscribeDjMasterState(setDjMaster), []);
-
-  // VJ SET hand-off status — makes "where it sends to" obvious right at the
-  // playhead: a pill showing the set is queued (amber) or confirmed in the VJ
-  // (emerald ✓). Only meaningful in the DJ/VJ live modes.
-  const vjSetCount = useVjSetStatusStore((s) => s.count);
-  const vjSetAcked = useVjSetStatusStore((s) => s.acked);
-  const vjSetName = useVjSetStatusStore((s) => s.name);
-
-  const displayLabel = engineLabel ?? lastFilename
-    ?? (centerTab === 'vj' ? 'VJ · live visuals' : centerTab === 'dj' ? 'DJ · live master' : null);
+  const displayLabel = engineLabel ?? lastFilename ?? null;
   const displayDuration = engineDuration > 0 ? engineDuration : (lastDurationSec ?? 0);
   const displayCurrentTime = currentTime;
-  // The transport icon reflects whatever is ACTUALLY producing output, on any
-  // surface: the global engine (library / make / edit — `isPlaying` also covers
-  // editor playback, which loads into the engine), the DJ master on the DJ tab,
-  // or the VJ video on the VJ tab. So pressing play on a library row (or
-  // anywhere) flips the footer to pause even while the live tabs are open.
-  const displayIsPlaying =
-    isPlaying ||
-    (isDjMode && djMaster === 'playing') ||
-    (centerTab === 'vj' && vjState === 'playing');
+  // The transport icon reflects whatever is ACTUALLY producing output: the
+  // global engine (library / make / edit — `isPlaying` also covers editor
+  // playback, which loads into the engine).
+  const displayIsPlaying = isPlaying;
   const progressPct = displayDuration > 0 ? Math.min(100, (displayCurrentTime / displayDuration) * 100) : 0;
 
   const handleToggle = () => {
-    // DJ-tab mode: the footer ▶ is the Live Master — play/pause the DJ decks
-    // (or start the active set from the top) and start the VJ visuals with it.
-    // It does NOT drive the global single-track player (that was the confusing
-    // "second playhead").
-    if (isDjMode) {
-      toggleDjMaster();
-      toggleVjPlayback();
-      return;
-    }
-    // VJ-tab mode: drive the VJ iframe's video element via the bus.
-    // Also toggle the SA3 player if a track is loaded so loaded
-    // audio + visuals start together. When there's no SA3 track,
-    // the VJ-only path runs alone.
-    if (isVjMode) {
-      toggleVjPlayback();
-      if (hasTrack) toggle();
-      return;
-    }
     // In editor mode, if editor audio isn't loaded yet, trigger the offline render+play.
     // Once loaded (entryId === 'editor-timeline'), toggle works natively.
     if (inEditorMode && currentEntryId !== 'editor-timeline') {
@@ -288,7 +224,7 @@ export const PlayerFooter: React.FC = () => {
           </button>
           <button
             onClick={handleToggle}
-            disabled={!isVjMode && !inEditorMode && !hasTrack}
+            disabled={!inEditorMode && !hasTrack}
             className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)] disabled:opacity-40 disabled:pointer-events-none"
             title={displayIsPlaying ? 'Pause' : 'Play'}
           >
@@ -318,23 +254,6 @@ export const PlayerFooter: React.FC = () => {
         </div>
 
         <div className="w-full flex items-center gap-3">
-          {isVjMode && vjSetCount > 0 && (
-            <span
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-mono uppercase tracking-widest shrink-0 ${
-                vjSetAcked
-                  ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-300'
-                  : 'border-amber-500/40 bg-amber-500/5 text-amber-300'
-              }`}
-              title={
-                vjSetAcked
-                  ? `VJ set "${vjSetName ?? ''}" loaded — ${vjSetCount} item${vjSetCount === 1 ? '' : 's'}`
-                  : `Sending set "${vjSetName ?? ''}" to the VJ…`
-              }
-            >
-              {vjSetAcked ? <Check className="w-3 h-3" /> : <Cast className="w-3 h-3" />}
-              VJ {vjSetCount}
-            </span>
-          )}
           <span className="text-[10px] font-mono text-zinc-500 w-8 text-right">{formatDuration(displayCurrentTime)}</span>
           <div
             ref={progressRef}

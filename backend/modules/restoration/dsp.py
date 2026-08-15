@@ -6,8 +6,7 @@ rather than emitting ffmpeg filter args.
 The bodies are plain sync functions on purpose: build_router offloads
 non-coroutine handlers to a worker thread via asyncio.to_thread, keeping the
 event loop responsive during CPU-bound DSP. ``vocal_isolate`` and
-``breath_removal`` additionally keep thin async facades because
-``backend.modules.vocal.preprocess.isolation`` awaits those exact names.
+``breath_removal`` keep thin async facades for callers that await them.
 """
 
 from __future__ import annotations

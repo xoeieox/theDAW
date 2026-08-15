@@ -38,9 +38,6 @@ interface FxRackProps {
    *  plugin's native editor (teal once a captured raw_state is stored). Absent
    *  (e.g. DRAW), VST tiles stay inert exactly as before. */
   onOpenVst?: (entry: ChainEntry) => void;
-  /** When provided, the 'ares' composite entry gets an open-surface button
-   *  that opens its .gan control surface. */
-  onOpenSurface?: (entry: ChainEntry) => void;
 }
 
 const fmtValue = (v: number, step: number, unit?: string): string => {
@@ -60,7 +57,6 @@ export function FxRack({
   displayParams,
   hideAdd,
   onOpenVst,
-  onOpenSurface,
 }: FxRackProps) {
   const addId = `${idPrefix}-add`;
 
@@ -158,16 +154,6 @@ export function FxRack({
               <span className="text-[10px] font-mono text-zinc-200 flex-1 truncate" title={def.description}>
                 {def.label}
               </span>
-              {entry.effect === 'ares' && onOpenSurface && (
-                <button
-                  onClick={() => onOpenSurface(entry)}
-                  aria-label="Open the Ares control surface"
-                  title="Open the Ares control surface"
-                  className="p-0.5 rounded text-zinc-500 hover:text-indigo-300 hover:bg-white/5 shrink-0"
-                >
-                  <Blocks className="w-3 h-3" />
-                </button>
-              )}
               <button
                 onClick={() => onReorder(i, i - 1)}
                 disabled={i === 0}

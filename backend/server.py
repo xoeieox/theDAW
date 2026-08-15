@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 import numpy as np
 from fastapi import Body, FastAPI, Form, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from backend.admin_routes import router as admin_router
 from backend.assistant_routes import router as assistant_router
@@ -881,26 +881,6 @@ async def _on_startup():
     except Exception as e:
         logger.warning("startup: background worker queue failed to start: %s", e)
 
-    # One idle-gated pass to ensure every entry with MIDI has a titled sheet
-    # (and existing sheets get their "Music21 Fragment" placeholder replaced
-    # with the real song name). Idempotent + serialized, so it's safe to run
-    # every launch — it only does work where a sheet is missing or mistitled.
-    try:
-        from backend.core.background_workers import get_background_queue
-        from backend.modules.library.router import get_store as _get_lib_store
-        from backend.modules.notation.backfill import backfill_scores
-
-        _bf_store = _get_lib_store()
-
-        async def _run_backfill() -> None:
-            import asyncio
-
-            await asyncio.to_thread(backfill_scores, _bf_store)
-
-        get_background_queue().enqueue("notation:backfill", _run_backfill)
-    except Exception as e:
-        logger.debug("startup: notation backfill enqueue skipped: %s", e)
-
 
 async def _on_shutdown() -> None:
     try:
@@ -1303,191 +1283,6 @@ async def _load_audio_upload(upload: UploadFile):
     return (sr, waveform)
 
 
-@app.post("/api/generate")
-async def generate(
-    prompt: str = Form(...),
-    negative_prompt: Optional[str] = Form(None),
-    duration: float = Form(30.0),
-    steps: int = Form(8),
-    cfg_scale: float = Form(1.0),
-    seed: int = Form(-1),
-    sampler_type: Optional[str] = Form(None),
-    sigma_max: float = Form(1.0),
-    apg_scale: float = Form(1.0),
-    duration_padding_sec: float = Form(6.0),
-    cfg_rescale: float = Form(0.0),
-    cfg_norm_threshold: float = Form(0.0),
-    cfg_interval_min: float = Form(0.0),
-    cfg_interval_max: float = Form(1.0),
-    # Distribution shift
-    dist_shift_type: Optional[str] = Form(None),
-    logsnr_anchor_length: int = Form(2000),
-    logsnr_anchor_logsnr: float = Form(-6.2),
-    logsnr_rate: float = Form(1.0),
-    logsnr_end: float = Form(2.0),
-    flux_min_len: int = Form(256),
-    flux_max_len: int = Form(4096),
-    flux_alpha_min: float = Form(1.15),
-    flux_alpha_max: float = Form(4.5),
-    full_base_shift: float = Form(0.5),
-    full_max_shift: float = Form(1.15),
-    full_min_len: int = Form(256),
-    full_max_len: int = Form(4096),
-    # Init audio
-    init_noise_level: float = Form(1.0),
-    init_audio_type: str = Form("Audio"),
-    # Inpainting
-    mask_start: float = Form(0.0),
-    mask_end: float = Form(0.0),
-    # RF-Inversion
-    inversion_steps: int = Form(8),
-    inversion_gamma: float = Form(0.5),
-    inversion_unconditional: str = Form("false"),
-    # File format
-    file_format: str = Form("wav"),
-    # File uploads
-    init_audio: Optional[UploadFile] = File(None),
-    inpaint_audio: Optional[UploadFile] = File(None),
-):
-    # RF-Inversion fields are part of the documented request surface (the
-    # frontend sends them; USER_GUIDE lists them) but the local pipeline has
-    # no inversion path yet, so they are accepted and intentionally unused.
-    _ = (inversion_steps, inversion_gamma, inversion_unconditional)
-
-    import torch
-    import torchaudio
-    from stable_audio_3.inference.distribution_shift import (
-        DistributionShift,
-        FluxDistributionShift,
-        LogSNRShift,
-    )
-
-    # Hold the generation lock so /api/model/offload|onload cannot move
-    # the weights out from under an in-flight synchronous generation.
-    async with _generation_job_lock:
-        # lazy: load (or wake) the active model on first use; clear any resident
-        # MRT2 engine first so SA3 never stacks on top of it (commit-limit crash)
-        await asyncio.get_event_loop().run_in_executor(
-            None, _ensure_gpu_clear_of_magenta
-        )
-        # Off the event loop (see /api/generate-jobs): a synchronous model load here
-        # would block the single worker and stall /health + media streaming.
-        generation_pipeline = await asyncio.get_event_loop().run_in_executor(
-            None, _get_or_load_generation_pipeline, _active_model_name
-        )
-
-        # Build dist_shift object
-        dist_shift = None
-        if dist_shift_type and dist_shift_type not in ("None", "none", ""):
-            if dist_shift_type == "LogSNR":
-                dist_shift = LogSNRShift(
-                    anchor_length=logsnr_anchor_length,
-                    anchor_logsnr=logsnr_anchor_logsnr,
-                    rate=logsnr_rate,
-                    logsnr_end=logsnr_end,
-                )
-            elif dist_shift_type == "Flux":
-                dist_shift = FluxDistributionShift(
-                    min_length=flux_min_len,
-                    max_length=flux_max_len,
-                    alpha_min=flux_alpha_min,
-                    alpha_max=flux_alpha_max,
-                )
-            elif dist_shift_type == "Full":
-                dist_shift = DistributionShift(
-                    base_shift=full_base_shift,
-                    max_shift=full_max_shift,
-                    min_length=full_min_len,
-                    max_length=full_max_len,
-                )
-
-        # Load init audio if provided
-        init_audio_tuple = None
-        if init_audio is not None and init_audio.filename:
-            init_audio_tuple = await _load_audio_upload(init_audio)
-        init_audio_type = _validate_init_audio_mode(
-            init_audio_type,
-            has_init_audio=init_audio_tuple is not None,
-        )
-
-        # Load inpaint audio if provided
-        inpaint_audio_tuple = None
-        if inpaint_audio is not None and inpaint_audio.filename:
-            inpaint_audio_tuple = await _load_audio_upload(inpaint_audio)
-
-        generate_args = {
-            "prompt": prompt,
-            "negative_prompt": negative_prompt if negative_prompt else None,
-            "duration": duration,
-            "steps": steps,
-            "cfg_scale": cfg_scale,
-            "seed": seed,
-            "apg_scale": apg_scale,
-            "duration_padding_sec": duration_padding_sec,
-            "scale_phi": cfg_rescale,
-            "cfg_norm_threshold": cfg_norm_threshold,
-            "cfg_interval": (cfg_interval_min, cfg_interval_max),
-        }
-        generate_args["sample_size"] = _compute_request_sample_size(
-            generation_pipeline,
-            duration,
-            duration_padding_sec,
-        )
-
-        if sampler_type:
-            generate_args["sampler_type"] = sampler_type
-        if sigma_max != 1.0:
-            generate_args["sigma_max"] = sigma_max
-        if dist_shift is not None:
-            generate_args["dist_shift"] = dist_shift
-
-        # Init audio (audio-to-audio)
-        if init_audio_tuple:
-            generate_args["init_audio"] = init_audio_tuple
-            generate_args["init_noise_level"] = init_noise_level
-
-        # Inpainting
-        if inpaint_audio_tuple:
-            generate_args["inpaint_audio"] = inpaint_audio_tuple
-            if mask_start > 0 or mask_end > 0:
-                generate_args["inpaint_mask_start_seconds"] = mask_start
-                generate_args["inpaint_mask_end_seconds"] = mask_end
-
-        loop = asyncio.get_event_loop()
-
-        def _do_generate():
-            gen_audio = generation_pipeline.generate(**generate_args)
-            gen_audio = gen_audio.to(torch.float32).clamp(-1, 1).squeeze(0).cpu()
-
-            fmt = file_format if file_format in ("wav", "flac", "ogg") else "wav"
-
-            buf = io.BytesIO()
-            save_kwargs: dict = {}
-            if fmt == "wav":
-                save_kwargs.update(encoding="PCM_S", bits_per_sample=16)
-            # torchaudio.save accepts file-like objects at runtime; its stub
-            # only declares str | PathLike, hence the cast.
-            torchaudio.save(
-                cast(Any, buf), gen_audio, sample_rate, format=fmt, **save_kwargs
-            )
-            buf.seek(0)
-            return buf, fmt
-
-        buffer, fmt = await loop.run_in_executor(None, _do_generate)
-
-    mime_map = {"wav": "audio/wav", "flac": "audio/flac", "ogg": "audio/ogg"}
-
-    return StreamingResponse(
-        buffer,
-        media_type=mime_map.get(fmt, "audio/wav"),
-        headers={
-            "Content-Disposition": f"attachment; filename=output_{seed}.{fmt}",
-            "X-Seed": str(seed),
-            "X-Duration": str(duration),
-        },
-    )
-
-
 # --- Async job shim for theDAW frontend (generate-jobs + polling) ---
 
 JOBS: dict[str, dict] = {}
@@ -1634,7 +1429,6 @@ async def _run_generate_job(
                         from backend.modules.library.store import (
                             _maybe_enqueue_analysis,
                             _maybe_enqueue_midi,
-                            _maybe_enqueue_score,
                             _maybe_enqueue_stems,
                         )
 
@@ -1661,9 +1455,6 @@ async def _run_generate_job(
                                 _lib_store, _entry_id, source="generate"
                             )
                             _maybe_enqueue_midi(
-                                _lib_store, _entry_id, source="generate"
-                            )
-                            _maybe_enqueue_score(
                                 _lib_store, _entry_id, source="generate"
                             )
                     except Exception as _e:
@@ -1986,66 +1777,24 @@ async def get_log(since: int = 0, limit: int = 1000):
 app.include_router(assistant_router)
 app.include_router(admin_router)
 
-# VJ app served as a static production build (default when a build is
-# bundled/resolvable; theDAW_VJ_DEV=1 opts back into the Node dev server). This
-# removes the runtime Node.js requirement on end-user machines and makes the VJ
-# tab work identically on Windows, macOS, Linux, and Docker. Mounted at
-# /vj-app (matching the VJ build's vite base) BEFORE the SPA catch-all below so
-# it isn't shadowed. In dev the frontend's Vite config proxies /vj-app -> :8600,
-# so the iframe loads it same-origin; in packaged/Docker it's already one origin.
-try:
-    from backend.modules.vj import sidecar as _vj_sidecar
-
-    if _vj_sidecar.is_static_mode():
-        _vj_dist = _vj_sidecar.resolve_dist_dir()
-        if _vj_dist is not None:
-            from fastapi.staticfiles import StaticFiles
-
-            app.mount(
-                _vj_sidecar.STATIC_MOUNT_PATH,
-                StaticFiles(directory=_vj_dist, html=True),
-                name="vj-app",
-            )
-            # Freeze the decision: routes return the /vj-app URL only when
-            # this mount really exists (see sidecar.static_mount_active).
-            _vj_sidecar.STATIC_MOUNTED = True
-            logger.info(
-                "vj: serving %s at %s (static build)",
-                _vj_dist,
-                _vj_sidecar.STATIC_MOUNT_PATH,
-            )
-except Exception as _vj_mount_err:  # noqa: BLE001 — never block boot on VJ
-    logger.warning("vj: static mount skipped: %s", _vj_mount_err)
-
-# Single-container / companion UI serving. Every API route lives under /api and
-# is registered above, BEFORE this mount, so the SPA catch-all can never shadow
+# Single-container UI serving. Every API route lives under /api and is
+# registered above, BEFORE this mount, so the SPA catch-all can never shadow
 # an endpoint.
 #
-# This fires when a built frontend/dist exists (Docker sets theDAW_SERVE_UI=1;
-# packaged desktop bundles ship a dist), so the desktop UI AND the phone
-# companion entry (frontend/mobile.html -> /mobile.html, with /assets at root)
-# are both reachable over http on the LAN. In pure dev (no dist) it is a no-op:
-# Vite serves the UI on :5173, proxies /api to :8600, and the phone loads
-# http://<lan-ip>:5173/mobile.html directly.
+# This fires when a built frontend/dist exists (Docker sets theDAW_SERVE_UI=1),
+# so the whole app is reachable over http from any browser on the network. In
+# pure dev (no dist) it is a no-op: Vite serves the UI on :5173 and proxies
+# /api to :8600.
 _ui_dist = PROJECT_ROOT / "frontend" / "dist"
 _serve_ui = (
     os.environ.get("theDAW_SERVE_UI") == "1" or (_ui_dist / "index.html").is_file()
 )
 if _serve_ui:
     if (_ui_dist / "index.html").is_file():
-        from fastapi.responses import RedirectResponse
         from fastapi.staticfiles import StaticFiles
 
-        # Short, phone-typeable alias for the companion entry. Registered BEFORE
-        # the "/" mount below so the mount cannot shadow it. Redirects (rather
-        # than serving mobile.html here) so the browser loads /mobile.html and
-        # its root-relative /assets/* resolve.
-        @app.get("/m", include_in_schema=False)
-        async def _mobile_entry() -> "RedirectResponse":
-            return RedirectResponse(url="/mobile.html")
-
         app.mount("/", StaticFiles(directory=_ui_dist, html=True), name="ui")
-        logger.info("ui: serving %s at / (companion entry at /m)", _ui_dist)
+        logger.info("ui: serving %s at /", _ui_dist)
     elif os.environ.get("theDAW_SERVE_UI") == "1":
         logger.warning(
             "ui: theDAW_SERVE_UI=1 but %s is missing; UI mount skipped", _ui_dist

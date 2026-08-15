@@ -24,7 +24,6 @@ import { TheOwl } from '../components/audio/TheOwl';
 import { ModuleThumb } from '../components/audio/ModuleThumb';
 import { ControlSurface } from '../components/surface/ControlSurface';
 import { attachMixLiveRack } from '../state/mixLiveRack';
-import { registerAresBridge, ARES_XY_PAD_FALLBACK_ID } from '../lib/aresBridge';
 import { RACK_EFFECTS, getRackEffect } from '../lib/rackEffects';
 import type { WidgetRegistry } from '../components/surface/widgetTypes';
 import type { SurfaceLayout } from '../state/surfaceLayoutStore';
@@ -32,11 +31,7 @@ import { EFFECT_CATALOG, PARAM_BOUNDS, CATEGORY_META, fxToCategory, fxPreview, v
 import { STUDIO_MODULES, moduleById, effectToModuleId, type StudioModule } from '../lib/moduleCatalog';
 import { MAGENTA_TOOLS, magentaToolById, type MagentaTool } from '../lib/magentaToolCatalog';
 import { MagentaToolStage } from '../components/audio/MagentaToolStage';
-import { GanPluginStage } from '../components/audio/GanPluginStage';
-import { useGanStore } from '../state/ganStore';
 import { useMixStageStore } from '../state/mixStageStore';
-import { ganApi, type GanPluginSummary } from '../lib/ganClient';
-import { GAN_FILTER } from '../lib/fileFilters';
 import { pickFile } from '../lib/storageClient';
 import { Boxes, Headphones, Music } from 'lucide-react';
 import '../components/layout/track-controls.css';
@@ -61,9 +56,6 @@ const PSYCHO_MODULES: PsychoModule[] = RACK_EFFECTS.filter((fx) => MIX_RACK_IDS.
   return { id: fx.id, name: fx.label, color: s.color, desc: fx.description, preview: s.preview };
 });
 
-/* The Ares control-surface -> 'ares' composite-effect mappings (control-id map,
-   XY-pad axes, message coalescing) live in lib/aresBridge.ts now, shared with
-   EDIT's Ares popup; MIX registers the bridge on mount below. */
 if (import.meta.env.DEV) {
   const uncovered = [...new Set(RACK_EFFECTS.map((fx) => fx.group))].filter((g) => !(g in PSYCHO_GROUP_STYLE));
   if (uncovered.length) console.warn('[MixView] psychoacoustic groups with no tile style (fallback used):', uncovered);
@@ -309,17 +301,13 @@ interface MixRegArgs {
   // added to the chain as 'vst3' nodes.
   vstPlugins: Vst3PluginInfo[]; vstScanning: boolean; rescanVst: () => void;
   addVstToChain: (p: Vst3PluginInfo) => void; vstInChain: Set<string>;
-  // .gan web-plugins (generic loader): installed list + the one open in the stage.
-  ganPlugins: GanPluginSummary[]; ganActiveId: string | null; ganActiveUrl: string | null;
-  ganActiveName: string | null; ganBusy: boolean;
-  onOpenGan: () => void; onImportGan: () => void; onPickGan: (id: string) => void; onRevealGan: (path: string) => void;
   // studio modules (exact-GUI instruments)
   onPickModule: (id: string) => void; activeModuleId: string | null; activeModule: StudioModule | null;
   // Psychoacoustic effects are first-class members of THE chain (added via
   // onPickPsycho -> addRackEffect); no separate rack store.
   onPickPsycho: (id: string) => void;
-  // Ares control surface (bundled .gan) — first-class Studio entry.
-  onPickAres: () => void; aresInstalled: boolean;
+  // Ares composite effect (filter→delay→reverb→grains→gate) — first-class Studio entry.
+  onPickAres: () => void;
   // magenta RT2 tools (Collider / Jam / MRT2 — generative instruments)
   onPickMagenta: (id: string) => void; activeMagentaId: string | null; activeMagentaTool: MagentaTool | null;
   // chain
@@ -431,13 +419,6 @@ function buildMixRegistry(p: MixRegArgs): WidgetRegistry {
           <span className="text-[10px] font-bold flex-1 truncate">VST</span>
           <span className="text-[8px] font-mono text-teal-600 shrink-0">{p.vstPlugins.length}</span>
         </button>
-        <button onClick={() => p.setActiveCategory('plugins')}
-          title="GAN web-plugins — open a .gan or import a VST Foundry export; renders in the effect stage"
-          className={`flex items-center gap-1.5 px-1.5 py-1.5 rounded w-full text-left border-l-2 transition-colors ${p.activeCategory === 'plugins' ? 'border-indigo-400 text-indigo-200 bg-indigo-500/10' : 'border-transparent text-indigo-400/80 hover:text-indigo-200 hover:bg-indigo-500/5'}`}>
-          <Blocks className="w-3.5 h-3.5 shrink-0" />
-          <span className="text-[10px] font-bold flex-1 truncate">Plugins</span>
-          <span className="text-[8px] font-mono text-indigo-600 shrink-0">{p.ganPlugins.length}</span>
-        </button>
         {CATEGORY_META.map((cat) => {
           const Icon = cat.icon;
           const active = p.activeCategory === cat.id;
@@ -501,19 +482,18 @@ function buildMixRegistry(p: MixRegArgs): WidgetRegistry {
       ) : p.activeCategory === 'studio' ? (
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-wrap gap-3 content-start justify-center p-1.5">
-            {/* Ares control surface — first-class bundled plugin, opens in the stage. */}
-            <button onClick={p.onPickAres} title="Ares — XY Kaoss control surface"
-              className={`group relative flex flex-col gap-1.5 rounded-md border overflow-hidden transition-all p-2 text-left ${p.ganActiveId === 'ares' ? 'border-rose-400/60 ring-1 ring-rose-400/40 bg-rose-500/5' : 'border-white/8 bg-black/30 hover:border-white/20 hover:brightness-110'}`}
+            {/* Ares composite effect — first-class Studio entry in THE chain. */}
+            <button onClick={p.onPickAres} title="Ares — composite performance effect (filter → delay → reverb → grains → gate)"
+              className={`group relative flex flex-col gap-1.5 rounded-md border overflow-hidden transition-all p-2 text-left ${p.selectedEntry?.effect === 'ares' ? 'border-rose-400/60 ring-1 ring-rose-400/40 bg-rose-500/5' : 'border-white/8 bg-black/30 hover:border-white/20 hover:brightness-110'}`}
               style={{ width: 132 }}>
               <div className="flex items-center gap-1.5">
                 <span aria-hidden="true" className="w-2 h-2 rounded-full shrink-0" style={{ background: '#ff3b3b', boxShadow: '0 0 5px #ff3b3b80' }} />
                 <span className="text-[10px] font-bold text-zinc-100 truncate flex-1">Ares</span>
-                {p.ganActiveId === 'ares' && <span aria-label="Open" className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />}
               </div>
               <div className="relative w-full h-20 rounded bg-[#0a0c14] border border-white/5 overflow-hidden grid place-items-center">
                 <Gauge className="w-7 h-7 text-rose-300/80" />
               </div>
-              <span className="text-[8px] font-mono text-zinc-500 leading-tight line-clamp-2">{p.aresInstalled ? 'XY Kaoss control surface' : 'packaging…'}</span>
+              <span className="text-[8px] font-mono text-zinc-500 leading-tight line-clamp-2">filter → delay → reverb → grains → gate</span>
             </button>
             {STUDIO_MODULES.map((m) => {
               const active = p.activeModule?.id === m.id;
@@ -589,44 +569,6 @@ function buildMixRegistry(p: MixRegArgs): WidgetRegistry {
             </div>
           )}
         </div>
-      ) : p.activeCategory === 'plugins' ? (
-        <div className="flex-1 overflow-y-auto min-h-0 flex flex-col">
-          <div className="flex items-center gap-2 px-1.5 pb-1.5 shrink-0">
-            <button onClick={p.onOpenGan} disabled={p.ganBusy} className="btn-ghost inline-flex items-center gap-1 disabled:opacity-40" title="Open a .gan plugin file">
-              <FolderOpen className="w-3 h-3" /> Open .gan
-            </button>
-            <button onClick={p.onImportGan} disabled={p.ganBusy} className="btn-ghost inline-flex items-center gap-1 disabled:opacity-40" title="Import a VST Foundry export (project.json) into a .gan">
-              <Plus className="w-3 h-3" /> Import
-            </button>
-            {p.ganBusy && <Loader2 className="w-3 h-3 animate-spin text-zinc-500" />}
-          </div>
-          {p.ganPlugins.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center opacity-30 italic gap-2 py-8">
-              <Blocks className="w-7 h-7" />
-              <span className="text-[10px]">No .gan plugins yet. Open or import one.</span>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-3 content-start justify-center p-1.5">
-              {p.ganPlugins.map((pl) => {
-                const active = p.ganActiveId === pl.id;
-                return (
-                  <button key={pl.id} onClick={() => p.onPickGan(pl.id)}
-                    onContextMenu={(e) => { e.preventDefault(); p.onRevealGan(pl.gan_path); }}
-                    title={`${pl.name} — right-click to reveal the .gan in its folder`}
-                    className={`group relative flex flex-col gap-1.5 rounded-md border overflow-hidden transition-all p-2 text-left ${active ? 'border-indigo-400/60 ring-1 ring-indigo-400/40 bg-indigo-500/5' : 'border-white/8 bg-black/30 hover:border-white/20 hover:brightness-110'}`}
-                    style={{ width: 132 }}>
-                    <div className="flex items-center gap-1.5">
-                      <Blocks className="w-3 h-3 text-indigo-300 shrink-0" />
-                      <span className="text-[10px] font-bold text-zinc-100 truncate flex-1">{pl.name}</span>
-                      {active && <span aria-label="Open" className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />}
-                    </div>
-                    <span className="text-[8px] font-mono text-zinc-500 leading-tight line-clamp-2">{pl.description || pl.kind}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
       ) : p.activeCategory === 'all' ? (() => {
         // Everything in MIX, in either list or icon view. Order: Studio +
         // Psychoacoustics first, then the backend effect categories.
@@ -638,8 +580,8 @@ function buildMixRegistry(p: MixRegArgs): WidgetRegistry {
               <AllHeader icon={Boxes} color="text-cyan-300" label="Studio" count={STUDIO_MODULES.length + 1} />
               <div className={boxCls}>
                 {tile
-                  ? <ModuleTile key="ares" name="Ares" color="#ff3b3b" marked={p.ganActiveId === 'ares'} onClick={p.onPickAres} />
-                  : <ModuleRow key="ares" name="Ares" desc="XY Kaoss control surface" color="#ff3b3b" marked={p.ganActiveId === 'ares'} onClick={p.onPickAres} />}
+                  ? <ModuleTile key="ares" name="Ares" color="#ff3b3b" marked={p.selectedEntry?.effect === 'ares'} onClick={p.onPickAres} />
+                  : <ModuleRow key="ares" name="Ares" desc="Composite performance effect" color="#ff3b3b" marked={p.selectedEntry?.effect === 'ares'} onClick={p.onPickAres} />}
                 {STUDIO_MODULES.map((m) => (tile
                   ? <ModuleTile key={m.id} name={m.name} color={m.color} marked={p.activeModule?.id === m.id} onClick={() => p.onPickModule(m.id)} preview={m.preview} />
                   : <ModuleRow key={m.id} name={m.name} desc={m.desc} color={m.color} marked={p.activeModule?.id === m.id} onClick={() => p.onPickModule(m.id)} />
@@ -794,8 +736,6 @@ function buildMixRegistry(p: MixRegArgs): WidgetRegistry {
   pinned('effectStage', 'Effect Stage', (
     p.vstEmbed
       ? <VstEmbedHost pluginPath={p.vstEmbed.pluginPath} pluginName={p.vstEmbed.pluginName} error={p.vstEmbed.error} onClose={p.onCloseVstEmbed} />
-    : p.ganActiveUrl
-      ? <GanPluginStage url={p.ganActiveUrl} name={p.ganActiveName} />
     : p.activeMagentaTool
       ? <MagentaToolStage tool={p.activeMagentaTool} />
     : p.activeModule
@@ -857,18 +797,6 @@ export const MixView: React.FC = () => {
   const vstPlugins = useVstStore((s) => s.plugins);
   const vstScanning = useVstStore((s) => s.scanning);
   const scanVst = useVstStore((s) => s.scan);
-  // .gan web-plugins (generic loader) for the MIX effect stage.
-  const ganPlugins = useGanStore((s) => s.plugins);
-  const ganActiveId = useGanStore((s) => s.activeId);
-  const ganActiveUrl = useGanStore((s) => s.activeUrl);
-  const ganActiveName = useGanStore((s) => s.activeName);
-  const ganBusy = useGanStore((s) => s.busy);
-  const ganRefresh = useGanStore((s) => s.refresh);
-  const ganOpenPath = useGanStore((s) => s.openPath);
-  const ganOpenById = useGanStore((s) => s.openById);
-  const ganImportOwl = useGanStore((s) => s.importOwl);
-  const ganEnsureAres = useGanStore((s) => s.ensureAres);
-  const ganClose = useGanStore((s) => s.close);
   const removeEffect = useEffectChainStore((s) => s.removeEffect);
   const updateParams = useEffectChainStore((s) => s.updateParams);
   const toggleEnabled = useEffectChainStore((s) => s.toggleEnabled);
@@ -927,90 +855,7 @@ export const MixView: React.FC = () => {
 
   // Populate the VST3 browser on first open (cached scan — cheap).
   useEffect(() => { void scanVst(false); }, [scanVst]);
-  // Populate the installed .gan plugin list on first open, then make sure the
-  // bundled Ares control surface is packaged so it shows as a Studio tile.
-  useEffect(() => { void ganRefresh().then(() => ganEnsureAres()); }, [ganRefresh, ganEnsureAres]);
 
-  // A tab round-trip restores the stage selection from mixStageStore, but the
-  // Ares .gan surface itself may not survive it: EDIT's unmount cleanup closes
-  // a shared Ares session on tab leave. If the restored selected entry is the
-  // 'ares' composite effect, re-open its surface once on mount so the stage
-  // shows the real UI instead of the generic viz. Guard rationale: the
-  // ganStore activeId must be null so a DIFFERENT live .gan plugin the user
-  // left open is never hijacked (ganStore is global and survives tab leaves),
-  // and no explicitly restored module or Magenta stage may exist because those
-  // outrank the chain selection in the stage ladder. selectChain is NOT reused
-  // here because it ganClose()s for non-ares entries, which would kill a
-  // restored gan session. The gan setters are zustand-bound and stable, so
-  // this effect runs once per mount.
-  useEffect(() => {
-    const { selectedChainId: restoredId, activeModuleId: restoredModule, activeMagentaId: restoredMagenta } = useMixStageStore.getState();
-    if (restoredModule || restoredMagenta) return;
-    const chainNow = useEffectChainStore.getState().chain;
-    const entry = chainNow.find((e) => e.id === restoredId) ?? chainNow[0] ?? null;
-    if (!entry || entry.effect !== 'ares') return;
-    if (useGanStore.getState().activeId !== null) return;
-    void (async () => {
-      // Sequence through ensureAres before opening: the sibling mount effect
-      // fires ganRefresh().then(ganEnsureAres) in the same tick, and
-      // package-ares rewrites the installed runtime files in place, so opening
-      // without waiting could iframe half-written files. ensureAres dedups
-      // concurrent calls in ganStore, so both mount paths share one run.
-      await ganEnsureAres();
-      // Re-check the guard after the await: an openPath/openById the user
-      // started while the ensure ran (busy while in flight, activeId once
-      // resolved) must win; the auto re-open must never resolve last and
-      // steal the stage from an explicitly opened plugin.
-      const gs = useGanStore.getState();
-      if (gs.activeId !== null || gs.busy) return;
-      await ganOpenById('ares');
-    })();
-  }, [ganEnsureAres, ganOpenById]);
-
-  // ── Ares control surface -> live effect params ─────────────────────────────
-  // The Ares .gan XY pad postMessages {type:'updateValue', id, valueX, valueY,
-  // valueZ}; drive the focused (else first) psychoacoustic chain entry's params
-  // from it — its first up-to-three params take X / Y / Z. rAF-coalesced so 60fps
-  // input never thrashes the store (mixLiveRack pushes params without a rebuild,
-  // so it stays click-free). If no rack effect is in the chain yet, one owlpad is
-  // added so the pad always has something audible to move.
-  const aresXyId = useMemo(() => {
-    const a = ganPlugins.find((pl) => pl.id === 'ares');
-    return a?.controls.find((c) => c.name === 'ares_xy_kaoss_pad')?.id ?? ARES_XY_PAD_FALLBACK_ID;
-  }, [ganPlugins]);
-  const aresXyIdRef = useRef(aresXyId);
-  aresXyIdRef.current = aresXyId;
-  // Ares .gan controls -> the single 'ares' composite chain effect, via the
-  // shared bridge (lib/aresBridge: XY pad -> macro params, mapped controls ->
-  // their params, rAF-coalesced). Registered for the life of the MIX view;
-  // EDIT's Ares popup takes ownership only while it is open.
-  useEffect(() => registerAresBridge({
-    getXyPadId: () => aresXyIdRef.current,
-    findEntry: () => useEffectChainStore.getState().chain.find((e) => e.effect === 'ares') ?? null,
-    updateParams: (id, params) => useEffectChainStore.getState().updateParams(id, params),
-  }), []);
-
-  // While Ares is open, feed the live master output level into its .gan so its
-  // level meter reflects the real signal (pushed down through the runtime relay).
-  useEffect(() => {
-    if (ganActiveId !== 'ares') return;
-    const analyser = getAnalyser();
-    const buf = new Uint8Array(analyser.fftSize);
-    let raf = 0;
-    let alive = true;
-    const tick = () => {
-      if (!alive) return;
-      analyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i += 1) { const v = (buf[i] - 128) / 128; sum += v * v; }
-      const level = Math.min(1, Math.sqrt(sum / buf.length) * 3);
-      const fr = document.getElementById('gan-stage-frame') as HTMLIFrameElement | null;
-      fr?.contentWindow?.postMessage({ type: 'level', value: level }, '*');
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => { alive = false; cancelAnimationFrame(raf); };
-  }, [ganActiveId]);
 
   useEffect(() => {
     if (!sourceFile) { setSrcStats(null); return; }
@@ -1120,27 +965,15 @@ export const MixView: React.FC = () => {
   // Picking a module from the library toggles its instrument open/closed. The
   // toggle reads the store directly because the store setter takes a plain
   // value, not a functional updater.
-  const handlePickModule = (id: string) => { ganClose(); setActiveMagentaId(null); setActiveModuleId(useMixStageStore.getState().activeModuleId === id ? null : id); };
+  const handlePickModule = (id: string) => { setActiveMagentaId(null); setActiveModuleId(useMixStageStore.getState().activeModuleId === id ? null : id); };
   // Selecting a chain entry hands the stage back to the effect→module mapping.
   const selectChain = (id: string) => {
     setActiveMagentaId(null); setActiveModuleId(null); setSelectedChainId(id);
-    // Ares' real UI is its .gan surface — (re)open it when its entry is selected
-    // instead of falling back to the generic viz; any other effect closes the .gan.
-    const entry = useEffectChainStore.getState().chain.find((e) => e.id === id);
-    if (entry?.effect === 'ares') {
-      void (async () => {
-        if (!useGanStore.getState().plugins.some((p) => p.id === 'ares')) await ganEnsureAres();
-        await ganOpenById('ares');
-      })();
-    } else {
-      ganClose();
-    }
   };
   // Picking a psychoacoustic tile adds it to THE chain (seeded with rack defaults)
   // and focuses it, so the effect stage shows its live view. If it is already in
   // the chain, just focus the existing entry.
   const handlePickPsycho = (id: string) => {
-    ganClose();
     setActiveModuleId(null);
     setActiveMagentaId(null);
     const existing = useEffectChainStore.getState().chain.find((e) => e.effect === id);
@@ -1154,52 +987,24 @@ export const MixView: React.FC = () => {
   // clicking the focused one again closes it. Mutually exclusive with the above.
   const activeMagentaTool: MagentaTool | null = activeMagentaId ? magentaToolById[activeMagentaId] ?? null : null;
   const handlePickMagenta = (id: string) => {
-    ganClose();
     setActiveModuleId(null);
     setActiveMagentaId(useMixStageStore.getState().activeMagentaId === id ? null : id);
   };
-  // .gan loader: pick/import sets the active plugin and yields the stage to it.
-  const handleOpenGan = async () => {
-    const r = await pickFile({ filter: GAN_FILTER, title: 'Open a .gan plugin' });
-    if (!r.path) return;
-    setActiveModuleId(null); setActiveMagentaId(null);
-    await ganOpenPath(r.path);
-  };
-  const handleImportGan = async () => {
-    const r = await pickFile({ title: 'Select a VST Foundry export (project.json)' });
-    if (!r.path) return;
-    setActiveModuleId(null); setActiveMagentaId(null);
-    await ganImportOwl(r.path);
-  };
-  const handlePickGan = (id: string) => {
-    setActiveModuleId(null); setActiveMagentaId(null);
-    void ganOpenById(id);
-  };
-  const handleRevealGan = (path: string) => { void ganApi.reveal(path).catch(() => {}); };
 
-  // Ares is a first-class Studio entry (bundled .gan). Opening it hands the effect
-  // stage to its iframe; package it on demand if the on-mount ensure hasn't landed.
-  const aresInstalled = ganPlugins.some((p) => p.id === 'ares');
+  // Ares is a first-class Studio entry: ensure ONE 'ares' composite effect is
+  // in the chain and focus it (its params edit in the chain card).
   const handlePickAres = () => {
     setActiveModuleId(null); setActiveMagentaId(null);
-    // Ensure ONE 'ares' composite effect is in the chain and focus it, then open
-    // its .gan surface in the Live View.
     const existing = useEffectChainStore.getState().chain.find((e) => e.effect === 'ares');
     if (existing) {
       setSelectedChainId(existing.id);
-    } else {
-      addRackEffect('ares');
-      const next = useEffectChainStore.getState().chain;
-      const added = next[next.length - 1];
-      if (added) setSelectedChainId(added.id);
+      return;
     }
-    void (async () => {
-      if (!useGanStore.getState().plugins.some((p) => p.id === 'ares')) await ganEnsureAres();
-      await ganOpenById('ares');
-    })();
+    addRackEffect('ares');
+    const next = useEffectChainStore.getState().chain;
+    const added = next[next.length - 1];
+    if (added) setSelectedChainId(added.id);
   };
-  // The generic Plugins browser excludes Ares (it lives in Studio as first-class).
-  const ganPluginsVisible = ganPlugins.filter((p) => p.id !== 'ares');
 
   const registry = buildMixRegistry({
     sourceUrl, outputUrl, srcStats, outStats, sourceFile,
@@ -1218,12 +1023,9 @@ export const MixView: React.FC = () => {
     quickMaster, setQuickParam, applyQuickMaster, masterEntry: !!masterEntry,
     activeEffects, viewMode, setViewMode, addEffect, chainEffectIds,
     vstPlugins, vstScanning, rescanVst: () => void scanVst(true), addVstToChain: addAndEditVst, vstInChain,
-    ganPlugins: ganPluginsVisible, ganActiveId, ganActiveUrl, ganActiveName, ganBusy,
-    onOpenGan: () => void handleOpenGan(), onImportGan: () => void handleImportGan(),
-    onPickGan: handlePickGan, onRevealGan: handleRevealGan,
     onPickModule: handlePickModule, activeModuleId, activeModule,
     onPickPsycho: handlePickPsycho,
-    onPickAres: handlePickAres, aresInstalled,
+    onPickAres: handlePickAres,
     onPickMagenta: handlePickMagenta, activeMagentaId, activeMagentaTool,
     chain, selectedId: selectedChainId, setSelectedId: selectChain,
     removeEffect, updateParams, toggleEnabled, reorder, clearChain, onEditVst: handleEditVst,

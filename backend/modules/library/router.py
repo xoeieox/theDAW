@@ -668,22 +668,6 @@ def list_all_midi() -> dict[str, Any]:
     return {"midis": out, "count": len(out)}
 
 
-@router.get("/_all/scores")
-def list_all_scores() -> dict[str, Any]:
-    """Return every notation/score artifact across every entry, joined to the
-    parent entry's title. Excludes raw ``midi`` artifacts (those live in the
-    MIDI tab); keeps sheets, tabs, arrangements, and exports."""
-    store = get_store()
-    if store.db is None:
-        raise HTTPException(503, "library DB not available")
-    out = [
-        art
-        for art in store.db.list_all_notation_artifacts()
-        if art.get("kind") != "midi"
-    ]
-    return {"scores": out, "count": len(out)}
-
-
 @router.get("/_graph/all")
 def get_full_graph() -> dict[str, Any]:
     """Return EVERY entry + relation in the library, PLUS virtual nodes

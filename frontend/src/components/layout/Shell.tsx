@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Smartphone, X, Copy, ExternalLink, ChevronUp, ChevronDown, GripHorizontal, ChevronRight, ChevronLeft, Library } from 'lucide-react';
+import { BookOpen, ChevronUp, ChevronDown, GripHorizontal, ChevronRight, ChevronLeft, Library } from 'lucide-react';
 import { LibraryView } from '../../views/LibraryView';
 import { DAWCenterPanel } from './DAWCenterPanel';
 
@@ -11,12 +11,10 @@ import { BottomMultiTabPanel } from './BottomMultiTabPanel';
 // out of first paint and only fetch the chunk when the user opens Docs.
 const DocsModal = lazy(() => import('./DocsModal').then((m) => ({ default: m.DocsModal })));
 import { SettingsModal } from './SettingsModal';
-import { DawImportModal } from './DawImportModal';
 import { ProjectModal } from './ProjectModal';
 import { DownloadDock } from './DownloadDock';
 import { useAppUiStore } from '../../state/appUiStore';
 import { useBottomPanelStore } from '../../state/bottomPanelStore';
-import { useDawImportStore } from '../../state/dawImportStore';
 import { useProjectStore } from '../../state/projectStore';
 import { useEditLayoutStore } from '../../state/editLayoutStore';
 import { useEditorStore } from '../../state/editorStore';
@@ -25,9 +23,6 @@ import { HomeScreen, useHomeScreenStore } from '../home/HomeScreen';
 import { OnboardingTour } from '../../onboarding/OnboardingTour';
 import { useOnboardingStore } from '../../onboarding/onboardingStore';
 import FeatureGateNotices from '../../notices/FeatureGateNotices';
-import { useStatusBarStore } from '../../state/statusBarStore';
-import { backendHttpBase, lanReachablePort } from '../../lib/backendBase';
-import { setXrHostPosture, onXrPeersChanged, kickXrPeer, type XrPeer } from '../../state/xrControlClient';
 import { useEditThemeStore } from '../../state/editThemeStore';
 import { resolveEditThemeVars } from '../../lib/editThemes';
 
@@ -46,7 +41,6 @@ export const Shell: React.FC = () => {
   const setLibraryExpanded = useAppUiStore((state) => state.setLibraryExpanded);
   const docsOpen = useAppUiStore((state) => state.docsOpen);
   const setDocsOpen = useAppUiStore((state) => state.setDocsOpen);
-  const openDawImport = useDawImportStore((state) => state.open);
   const openProject = useProjectStore((state) => state.open);
   const editLayoutActive = useEditLayoutStore((state) => state.active);
   const toggleEditLayout = useEditLayoutStore((state) => state.toggle);
@@ -67,110 +61,6 @@ export const Shell: React.FC = () => {
     if (ok) loadProject({ tracks: [], clips: [] });
   }, [loadProject]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [shareOpen, setShareOpen] = React.useState(false);
-  const [shareUrlOverride, setShareUrlOverride] = React.useState(() => {
-    if (typeof window === 'undefined') return '';
-    return window.localStorage.getItem('thedaw.shareUrlOverride') ?? '';
-  });
-  const [copiedShareUrl, setCopiedShareUrl] = React.useState(false);
-
-  // LAN-reachable URL for this app (host:frontend-port), auto-detected
-  // from the backend so the QR points phones at a real address instead
-  // of localhost. Falls back to window.location.origin when there's no
-  // LAN IP (e.g. offline). Mirrors how the VJ tab builds its mobile QR.
-  const [lanUrl, setLanUrl] = React.useState('');
-  const isBackendReadyForLan = useStatusBarStore((s) => s.isBackendReady);
-  React.useEffect(() => {
-    // Wait for the backend: on a packaged cold start this fetch used to fire
-    // once before :8600 was bound, fail, and leave the share link on the
-    // app://. origin fallback forever.
-    if (!isBackendReadyForLan || lanUrl) return;
-    let cancelled = false;
-    void fetch('/api/vj/lan-ip')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { lan_ip?: string | null } | null) => {
-        if (cancelled || !j?.lan_ip || typeof window === 'undefined') return;
-        // Packaged app has no window port (app://. origin) — phones reach it
-        // on the backend port; browser dev keeps its own port (5173 fallback).
-        const port = lanReachablePort() || '5173';
-        setLanUrl(`http://${j.lan_ip}:${port}`);
-      })
-      .catch(() => {
-        /* no backend / no LAN — keep the http fallback */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isBackendReadyForLan, lanUrl]);
-
-  // Never fall back to window.location.origin blindly: in the packaged app
-  // that is app://., which is useless on a phone AND opens a second copy of
-  // the whole app when clicked. backendHttpBase() is always a real http URL.
-  const detectedShareUrl =
-    lanUrl || (typeof window === 'undefined' ? '' : backendHttpBase());
-  const shareUrl = shareUrlOverride.trim() || detectedShareUrl;
-  const qrImageUrl = useMemo(
-    () => `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(shareUrl)}`,
-    [shareUrl],
-  );
-
-  // Phone-companion pairing. The host picks the posture (open LAN or a required
-  // code) before handing out the QR; the code rides the URL as ?pair=<code> so
-  // scanning auto-fills it. See docs/companion-control-contract.md.
-  const [postureMode, setPostureMode] = React.useState<'open' | 'code'>('open');
-  const [pairCode, setPairCode] = React.useState('');
-  const [companionPeers, setCompanionPeers] = React.useState<XrPeer[]>([]);
-  const [copiedCompanion, setCopiedCompanion] = React.useState(false);
-
-  React.useEffect(() => onXrPeersChanged(setCompanionPeers), []);
-  React.useEffect(() => {
-    setXrHostPosture({ mode: postureMode, code: postureMode === 'code' ? pairCode : null });
-  }, [postureMode, pairCode]);
-
-  const companionUrl = useMemo(() => {
-    const base = (shareUrl || '').replace(/\/+$/, '');
-    if (!base) return '';
-    const q = postureMode === 'code' && pairCode ? `?pair=${pairCode}` : '';
-    return `${base}/mobile.html${q}`;
-  }, [shareUrl, postureMode, pairCode]);
-  const companionQrUrl = useMemo(
-    () =>
-      companionUrl
-        ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(companionUrl)}`
-        : '',
-    [companionUrl],
-  );
-  const chooseCodePosture = () => {
-    setPairCode((c) => c || Math.floor(1000 + Math.random() * 9000).toString());
-    setPostureMode('code');
-  };
-  const copyCompanionUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(companionUrl);
-      setCopiedCompanion(true);
-      window.setTimeout(() => setCopiedCompanion(false), 1500);
-    } catch {
-      /* clipboard blocked — the URL is still visible to copy manually */
-    }
-  };
-
-  const updateShareUrlOverride = (value: string) => {
-    setShareUrlOverride(value);
-    if (typeof window === 'undefined') return;
-    if (value.trim()) window.localStorage.setItem('thedaw.shareUrlOverride', value);
-    else window.localStorage.removeItem('thedaw.shareUrlOverride');
-  };
-
-  const copyShareUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedShareUrl(true);
-      window.setTimeout(() => setCopiedShareUrl(false), 1400);
-    } catch {
-      setCopiedShareUrl(false);
-    }
-  };
-
   useEffect(() => {
     const handler = (e: Event) => {
       const tab = (e as CustomEvent).detail?.tab;
@@ -253,13 +143,7 @@ export const Shell: React.FC = () => {
         />
 
         <div className="flex items-center gap-2.5 shrink-0">
-          {/* Order: Mobile, Docs, then the app menu (hamburger) on the far right. */}
-          <TopBarButton
-            onClick={() => setShareOpen(true)}
-            icon={<Smartphone className="w-3.5 h-3.5" />}
-            title="Open mobile access QR/link"
-            accent="emerald"
-          />
+          {/* Order: Docs, then the app menu (hamburger) on the far right. */}
           <TopBarButton
             onClick={() => setDocsOpen(true)}
             icon={<BookOpen className="w-3.5 h-3.5" />}
@@ -274,7 +158,6 @@ export const Shell: React.FC = () => {
               onNewProject={handleNewProject}
               onOpenProject={() => openProject('open')}
               onSaveProject={() => openProject('save')}
-              onImportDawProject={() => openDawImport()}
               onToggleEditLayout={toggleEditLayout}
               editLayoutActive={editLayoutActive}
               onOpenSettings={() => setSettingsOpen(true)}
@@ -359,164 +242,7 @@ export const Shell: React.FC = () => {
           <DocsModal open={docsOpen} onClose={() => setDocsOpen(false)} />
         </Suspense>
       )}
-      {shareOpen && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setShareOpen(false)} />
-          <div className="relative w-[min(420px,92vw)] bg-[#0c0a14] border border-emerald-500/30 rounded-lg shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-linear-to-r from-emerald-900/25 to-purple-900/15">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-4 h-4 text-emerald-300" />
-                <div className="flex flex-col leading-tight">
-                  <span className="text-[11px] font-black uppercase tracking-widest text-emerald-200">Mobile Access</span>
-                  <span className="text-[8px] font-mono uppercase tracking-wider text-emerald-300/60">QR + tunnel-friendly link</span>
-                </div>
-              </div>
-              <button onClick={() => setShareOpen(false)} className="p-1 text-zinc-500 hover:text-white transition-colors rounded hover:bg-white/5" title="Close">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="p-4 flex flex-col gap-4">
-              <div className="flex justify-center">
-                <div className="p-3 rounded-lg bg-white shadow-[0_0_24px_rgba(16,185,129,0.16)]">
-                  <img src={qrImageUrl} alt="theDAW mobile access QR code" className="w-55 h-55" />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="shell-share-url" className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Share URL</label>
-                <div className="flex gap-2">
-                  <input
-                    id="shell-share-url"
-                    type="text"
-                    name="shell-share-url"
-                    value={shareUrl}
-                    readOnly
-                    className="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1.5 text-[10px] font-mono text-zinc-200 outline-none"
-                  />
-                  <button
-                    onClick={() => void copyShareUrl()}
-                    className="px-2 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5"
-                    title="Copy share URL"
-                  >
-                    <Copy className="w-3 h-3" /> {copiedShareUrl ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                <a href={shareUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-[9px] font-mono text-emerald-300/75 hover:text-emerald-200 transition-colors">
-                  <ExternalLink className="w-2.5 h-2.5" /> Open link in new tab
-                </a>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="shell-share-url-override" className="text-[9px] font-black uppercase tracking-widest text-zinc-400">External URL override</label>
-                <input
-                  id="shell-share-url-override"
-                  type="url"
-                  name="shell-share-url-override"
-                  value={shareUrlOverride}
-                  onChange={(e) => updateShareUrlOverride(e.target.value)}
-                  placeholder="Paste Cloudflare tunnel URL, e.g. https://name.trycloudflare.com"
-                  className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-[10px] font-mono text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-emerald-500/50 transition-colors"
-                />
-                <p className="text-[9px] leading-relaxed text-zinc-500">
-                  By default this uses <span className="font-mono text-zinc-400">{detectedShareUrl}</span>. Paste a Cloudflare Tunnel or other public URL here when your phone is not on the same network.
-                </p>
-              </div>
-
-              {/* Phone companion — a lean remote app (library + player control),
-                  separate from opening the full desktop UI above. */}
-              <div className="flex flex-col gap-2 pt-3 border-t border-white/5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-purple-300">Phone companion</span>
-                  <span className="text-[8px] font-mono uppercase tracking-wider text-purple-300/50">library + remote</span>
-                </div>
-                <p className="text-[9px] leading-relaxed text-zinc-500">
-                  A lightweight phone app to browse and play the library and remote-control the player. Choose who may drive this desktop before you share the code.
-                </p>
-
-                {/* Posture: both options shown; the host selects before allowing a peer. */}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={postureMode === 'open'}
-                    onClick={() => setPostureMode('open')}
-                    className={`flex-1 px-2 py-1.5 rounded border text-[9px] font-black uppercase tracking-widest transition-colors ${postureMode === 'open' ? 'border-purple-400/60 bg-purple-500/20 text-purple-100' : 'border-white/10 bg-black/30 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Open LAN
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={postureMode === 'code'}
-                    onClick={chooseCodePosture}
-                    className={`flex-1 px-2 py-1.5 rounded border text-[9px] font-black uppercase tracking-widest transition-colors ${postureMode === 'code' ? 'border-purple-400/60 bg-purple-500/20 text-purple-100' : 'border-white/10 bg-black/30 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Require code
-                  </button>
-                </div>
-
-                {postureMode === 'code' && (
-                  <div className="flex items-center justify-between px-3 py-2 rounded bg-black/40 border border-purple-500/20">
-                    <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-400">Pair code</span>
-                    <span className="text-[15px] font-mono font-black tracking-[0.35em] text-purple-200">{pairCode}</span>
-                  </div>
-                )}
-
-                {companionQrUrl && (
-                  <div className="flex justify-center pt-1">
-                    <div className="p-3 rounded-lg bg-white shadow-[0_0_24px_rgba(139,92,246,0.16)]">
-                      <img src={companionQrUrl} alt="theDAW phone companion QR code" className="w-44 h-44" />
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="shell-companion-url" className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Companion URL</label>
-                  <div className="flex gap-2">
-                    <input
-                      id="shell-companion-url"
-                      type="text"
-                      name="shell-companion-url"
-                      value={companionUrl}
-                      readOnly
-                      className="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1.5 text-[10px] font-mono text-zinc-200 outline-none"
-                    />
-                    <button
-                      onClick={() => void copyCompanionUrl()}
-                      className="px-2 py-1.5 rounded border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-200 text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5"
-                      title="Copy companion URL"
-                    >
-                      <Copy className="w-3 h-3" /> {copiedCompanion ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                </div>
-
-                {companionPeers.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Connected ({companionPeers.length})</span>
-                    <ul className="flex flex-col gap-1">
-                      {companionPeers.map((p) => (
-                        <li key={p.peerId} className="flex items-center justify-between px-2 py-1.5 rounded bg-black/30 border border-white/10">
-                          <span className="text-[10px] font-mono text-zinc-200">{p.label}</span>
-                          <button
-                            type="button"
-                            onClick={() => kickXrPeer(p.peerId)}
-                            aria-label={`Disconnect ${p.label}`}
-                            className="px-2 py-0.5 rounded border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-200 text-[8px] font-black uppercase tracking-widest"
-                          >
-                            Kick
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <DawImportModal />
       <ProjectModal />
       {/* Floating model-download manager — fixed bottom-right, self-hiding when
           there are no downloads. Mounted once at the app root so it floats over

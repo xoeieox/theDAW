@@ -3,7 +3,9 @@ name = "stable-audio-3"
 version = "0.1.3"
 description = "Stable Audio 3: A state-of-the-art open platform for fast, high-quality generated audio and music"
 readme = "README.md"
-requires-python = ">=3.10"
+# Effectively pinned to 3.10: the vendored aubio and flash-attn wheels in
+# [tool.uv.sources] are cp310-only, so wider bounds cannot actually resolve.
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "einops>=0.8.2",
     "einops-exts>=0.0.4",
@@ -56,39 +58,12 @@ dependencies = [
     "piano-transcription-inference>=0.0.5",
     "pretty_midi>=0.2.11",
     "mido>=1.3.3",
-    # notation module — symbolic music conversion / analysis backbone.
-    "music21>=9.7.1,<10.3.0",
-    "partitura>=1.9.0",
-    # controllervision module — classical CV (Hough/contours) to infer a MIDI
-    # controller's layout from a product photo. Headless (no GUI libs). The
-    # module guards its import, so the backend still boots if this is absent.
-    "opencv-python-headless>=4.9.0",
-    # ytimport module (backend/modules/ytimport) — paste a URL (YouTube,
-    # SoundCloud, Bandcamp, …) and pull the best audio via yt-dlp. Date-versioned
-    # and updated often as site extractors change; keep a generous floor and let
-    # `uv sync` pull the newest so YouTube/SoundCloud keep working.
-    "yt-dlp>=2025.1.1",
-    # akvj native Kinect point cloud (backend/modules/akvj/kinect_sidecar.py).
-    # pyk4a-bundle ships its OWN matched k4a.dll + depthengine, so no separate
-    # Azure Kinect SDK install is needed; the sidecar just works. Windows x64 +
-    # Linux x64 only (no macOS wheel), gated so `uv sync` skips it elsewhere.
-    # websockets is the sidecar's WebSocket client to the relay.
-    "pyk4a-bundle ; (sys_platform == 'win32') or (sys_platform == 'linux' and platform_machine == 'x86_64')",
-    "websockets>=12.0",
-    # --- VST / DAW import / .tasmo project format (June 2026) ---
+    # --- VST hosting / .tasmo project format (June 2026) ---
     # VST3 plugin hosting via pedalboard (Spotify). JUCE-based, VST3+AudioUnit,
     # GPL-3.0 (compatible with open-source theDAW). Windows/macOS/Linux.
     "pedalboard>=0.9.23",
-    # Reaper .RPP project file parsing. MIT licensed.
-    "reaproj>=0.1.0",
     # Binary serialization for .tasmo project files (MsgPack + ZIP).
     "msgpack>=1.2.1",
-    # FL Studio .flp project parsing (Image-Line NEM binary format). PyPI.
-    "pyflp>=2.0.0",
-    # Audacity .aup3 project parsing. py-aup3 is GitHub-only (not on PyPI).
-    # The PyPI "aup-parser" package requires Python >=3.11 (we're on 3.10).
-    # Install manually: pip install git+https://github.com/mildsunrise/py-aup3.git
-    # The parser handles ImportError gracefully at runtime if not installed.
 ]
 
 [project.optional-dependencies]
@@ -183,8 +158,6 @@ exclude = [
     # Vendored subrepo (dada-bots/underfit + local mods); keeps its own style,
     # not linted by the parent project — same policy as the MRT2 sidecar above.
     "underfit",
-    # Runtime-created isolated venv for the faster-whisper transcription sidecar.
-    "backend/modules/vocal/transcription/.whisper_venv",
     # Vendored stems-separation sidecar (Demucs/LARSNET server); runs in its own
     # venv with its own deps, keeps its own style — same policy as underfit.
     "integration-package",

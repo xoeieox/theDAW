@@ -10,7 +10,6 @@ import {
   sendAudioToInpaint,
   type SendableAudio,
 } from '../lib/sendToTargets';
-import { sunoActions } from '../suno/sunoActions';
 import { HoverTip } from '../components/ui/Tooltip';
 import { playCatalogueEntry } from './CatalogueList';
 import { loadConvertFormats, formatsForKind, convertLibraryEntry } from '../convert/convertClient';
@@ -52,8 +51,7 @@ const Item: React.FC<{
 
 /**
  * CatalogueContextMenu — right-click row actions, all bound to the existing
- * library store + the shared `sendToTargets` helpers. Suno cover/mashup items
- * are gated to Suno-origin entries (`model === 'suno'`).
+ * library store + the shared `sendToTargets` helpers.
  */
 export const CatalogueContextMenu: React.FC<Props> = ({ menu, onClose }) => {
   const { entry } = menu;
@@ -171,15 +169,6 @@ export const CatalogueContextMenu: React.FC<Props> = ({ menu, onClose }) => {
       <Item icon={Layers} label="Send to Editor (new track)" tip="Add this audio as a brand-new track in the editor." onClick={run(() => sendAudioToEditor(sendable, 'editor-new-track'))} />
       <Item icon={Wand2} label="Send to Init audio" tip="Load this audio into the generator's Init (audio-to-audio) slot." onClick={run(() => sendAudioToInit(sendable))} />
       <Item icon={PenLine} label="Send to Inpaint" tip="Load this audio into the generator's Inpaint slot to regenerate a region." onClick={run(() => sendAudioToInpaint(sendable))} />
-
-      {/* Suno-only: a Suno clip can seed a Suno cover/mashup. */}
-      {sunoActions.canUseAsSunoSource(entry) && (
-        <>
-          <div className="border-t border-white/5 my-0.5" />
-          <Item icon={Cloud} label="Suno: Cover" tip="Use this Suno clip as the source for a Suno cover. (Suno tracks only.)" onClick={run(() => sunoActions.sendToCover(entry))} />
-          <Item icon={Shuffle} label="Suno: Mashup" tip="Use this Suno clip as the base for a Suno mashup. (Suno tracks only.)" onClick={run(() => sunoActions.sendToMashup(entry))} />
-        </>
-      )}
 
       <div className="border-t border-white/5 my-0.5" />
       <Item icon={Star} label={entry.favorite ? 'Unfavorite' : 'Favorite'} tip={entry.favorite ? 'Remove from favorites.' : 'Mark as a favorite (star).'} onClick={run(() => toggleFavorite(entry.id))} />

@@ -2,11 +2,11 @@
 
 The Shutdown/Restart buttons exit via ``os._exit`` (atexit handlers hang on
 uvicorn shutdown when invoked from a request thread), which used to orphan
-every running sidecar: the VJ/Foundry node servers, the stems python process,
-questcast/akvj helpers, and the underfit dashboard all stayed resident holding
-their ports. This module gives both the lifespan shutdown and the admin exit
-paths one place that stops them all, swallowing every failure — teardown must
-never block or break process exit.
+every running sidecar: the stems python process, the Magenta engine, and the
+underfit dashboard all stayed resident holding their ports. This module gives
+both the lifespan shutdown and the admin exit paths one place that stops them
+all, swallowing every failure — teardown must never block or break process
+exit.
 """
 
 from __future__ import annotations
@@ -21,13 +21,9 @@ def stop_all_sidecars() -> None:
     from any thread; never raises."""
     # (import path, callable name, needs get_sidecar() instance)
     targets = [
-        ("backend.modules.vj.sidecar", "stop", False),
-        ("backend.modules.foundry.sidecar", "stop", False),
         ("backend.modules.underfit.sidecar", "stop", False),
         ("backend.modules.magenta.sidecar", "stop_engine", False),
         ("backend.modules.stems.sidecar", "stop", True),
-        ("backend.modules.questcast.sidecar", "stop", True),
-        ("backend.modules.akvj.sidecar", "stop", True),
     ]
     for module_path, fn_name, needs_instance in targets:
         try:

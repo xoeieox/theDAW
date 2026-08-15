@@ -79,7 +79,7 @@ def test_genre_field_raises_confidence_and_tags():
 
 def test_analysis_schema_v3_persists_prompt(tmp_path: Path):
     db = LibraryDB(tmp_path / "library.db")
-    assert db.schema_version() == 3
+    assert db.schema_version() >= 3
     db.upsert_entry({"id": "track"})
     db.upsert_analysis(
         "track",

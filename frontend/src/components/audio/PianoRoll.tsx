@@ -12,8 +12,6 @@ import { renderStepNotesToBlob } from '../../lib/midiSynth';
 import { triggerPianoNote } from '../../lib/pianoTrigger';
 import { InstrumentPicker } from './InstrumentPicker';
 import { MidiImportPopover } from './MidiImportPopover';
-import { parseSheetFile } from '../../lib/sheetImportClient';
-import { AiComposePopover } from './AiComposePopover';
 
 const NOTE_HEIGHT = 12;
 const HEADER_HEIGHT = 22;
@@ -348,40 +346,6 @@ export const PianoRoll: React.FC = () => {
     }).catch((e) => logError('piano-roll', `Could not read file: ${e instanceof Error ? e.message : String(e)}`));
   };
 
-  const handleImportSheet = (file: File) => {
-    void (async () => {
-      try {
-        const score = await parseSheetFile(file);
-        // Flatten all parts into a single piano-roll layer (step/length already
-        // on the 16th grid from the backend).
-        const flat: PianoNote[] = [];
-        for (const track of score.tracks) {
-          for (const n of track.notes) {
-            flat.push({
-              id: `sheet-${Math.random().toString(36).slice(2)}-${flat.length}`,
-              note: n.pitch,
-              step: n.step,
-              length: Math.max(1, n.length),
-              velocity: n.velocity,
-            });
-          }
-        }
-        if (flat.length === 0) {
-          logError('piano-roll', `No notes found in "${file.name}"`);
-          return;
-        }
-        flat.sort((a, b) => a.step - b.step);
-        importNotes(flat, score.bpm);
-        logInfo(
-          'piano-roll',
-          `Imported ${flat.length} notes from score "${file.name}" (${score.format}) at ${Math.round(score.bpm)} BPM`,
-        );
-      } catch (e) {
-        logError('piano-roll', `Sheet import failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    })();
-  };
-
   const handleGridScroll = () => {
     if (keyboardRowsRef.current && gridScrollRef.current) {
       keyboardRowsRef.current.scrollTop = gridScrollRef.current.scrollTop;
@@ -546,11 +510,7 @@ export const PianoRoll: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[9px] font-mono text-zinc-500">{notes.length} note{notes.length === 1 ? '' : 's'}</span>
-          <AiComposePopover
-            currentBpm={bpm}
-            onGenerated={(result) => importNotes(result.notes, result.bpm)}
-          />
-          <MidiImportPopover onImportFile={handleImportMidi} onImportSheetFile={handleImportSheet} />
+          <MidiImportPopover onImportFile={handleImportMidi} />
           <button
             onClick={handleExportMidi}
             className="btn-ghost text-[9px] py-1 flex items-center gap-1.5"

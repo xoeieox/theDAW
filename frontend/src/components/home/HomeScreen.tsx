@@ -1,23 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import {
-  Compass,
-  Disc,
-  FileAudio,
-  FlaskConical,
-  FolderOpen,
-  Hammer,
-  Route,
-  Rows3,
-  Scissors,
-  Sparkles,
-  Tv2,
-  Waypoints,
-  Workflow,
-  X,
-  Zap,
-} from 'lucide-react';
+import { Compass, FileAudio, FlaskConical, FolderOpen, Scissors, Sparkles, Workflow, X, Zap } from 'lucide-react';
 import { type CenterTab } from '../../state/appUiStore';
 
 /** Startup HOME screen: a full-screen overlay shown once the boot intro has
@@ -109,50 +93,6 @@ const HOME_TABS: Array<{
     },
   },
   {
-    id: 'session',
-    label: 'Perform',
-    desc: 'Import a project and perform its scene/clip grid live',
-    icon: Rows3,
-    accent: {
-      borderL: 'border-l-sky-500/50',
-      hoverBorderL: 'hover:border-l-sky-400/90',
-      icon: 'text-sky-300',
-    },
-  },
-  {
-    id: 'dj',
-    label: 'DJ',
-    desc: 'Two-deck DJ console: mix, cue, scratch, stems and automix',
-    icon: Disc,
-    accent: {
-      borderL: 'border-l-pink-500/50',
-      hoverBorderL: 'hover:border-l-pink-400/90',
-      icon: 'text-pink-300',
-    },
-  },
-  {
-    id: 'vj',
-    label: 'VJ',
-    desc: 'Live visuals engine: sources, effects and output for performance',
-    icon: Tv2,
-    accent: {
-      borderL: 'border-l-fuchsia-500/50',
-      hoverBorderL: 'hover:border-l-fuchsia-400/90',
-      icon: 'text-fuchsia-300',
-    },
-  },
-  {
-    id: 'foundry',
-    label: 'Foundry',
-    desc: 'Design and export custom VST / plugin interfaces on an infinite canvas',
-    icon: Hammer,
-    accent: {
-      borderL: 'border-l-amber-500/50',
-      hoverBorderL: 'hover:border-l-amber-400/90',
-      icon: 'text-amber-300',
-    },
-  },
-  {
     id: 'underfit',
     label: 'Underfit',
     desc: 'Train LoRA finetunes with the Underfit dashboard',
@@ -164,17 +104,6 @@ const HOME_TABS: Array<{
     },
   },
   {
-    id: 'audimate',
-    label: 'Audimate',
-    desc: 'Build generation pipelines as a wired node graph, then run them',
-    icon: Waypoints,
-    accent: {
-      borderL: 'border-l-teal-500/50',
-      hoverBorderL: 'hover:border-l-teal-400/90',
-      icon: 'text-teal-300',
-    },
-  },
-  {
     id: 'learn',
     label: 'Learn',
     desc: 'Guides, docs and the in-app assistant',
@@ -183,17 +112,6 @@ const HOME_TABS: Array<{
       borderL: 'border-l-rose-500/50',
       hoverBorderL: 'hover:border-l-rose-400/90',
       icon: 'text-rose-300',
-    },
-  },
-  {
-    id: 'tour',
-    label: 'Tour',
-    desc: 'Find venues and promoters by region, plan multi-stop tour routes',
-    icon: Route,
-    accent: {
-      borderL: 'border-l-lime-500/50',
-      hoverBorderL: 'hover:border-l-lime-400/90',
-      icon: 'text-lime-300',
     },
   },
 ];

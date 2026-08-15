@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Trash2, Download, X, Zap, Cast, CircleAlert } from 'lucide-react';
+import { Trash2, Download, X, Zap, CircleAlert } from 'lucide-react';
 import { useLogStore, type LogLevel, type LogEntry } from '../../state/logStore';
 import { useLibraryStore } from '../../state/libraryStore';
 import { buildGenerateParamsFromState, useGenerateStore } from '../../state/generateStore';
@@ -7,7 +7,6 @@ import { useGenerateParamsStore } from '../../state/generateParamsStore';
 import { useStudioStore } from '../../state/studioStore';
 import { useTrainingStore } from '../../state/trainingStore';
 import { useSetlistStore } from '../../state/setlistStore';
-import { sendSetToVj, isVjSetTargetActive, type VjSetItem } from '../../state/vjSetBus';
 import { useAppUiStore } from '../../state/appUiStore';
 import { useStatusBarStore } from '../../state/statusBarStore';
 import { useBottomPanelStore } from '../../state/bottomPanelStore';
@@ -317,36 +316,6 @@ export const LogActionButton: React.FC = () => {
   const cfg = TAB_CONFIG[tab];
   const isActive = tab === 'create' ? isGenerating : tab === 'edit' ? isProcessing : tab === 'train' ? isTraining : false;
 
-  // On the DJ tab the action button is SEND TO VJ (CREATE/PROCESS make no sense
-  // there) — pushes the active setlist to the VJ performance.
-  const sendActiveSetToVj = () => {
-    const { setlists, activeId } = useSetlistStore.getState();
-    const activeSet = activeId ? setlists[activeId] : null;
-    if (!activeSet || activeSet.entries.length === 0) return;
-    const entries = useLibraryStore.getState().entries;
-    const items: VjSetItem[] = activeSet.entries.map((e) => {
-      const entry = e.entryId ? entries.find((x) => x.id === e.entryId) ?? null : null;
-      return { entryId: e.entryId, label: e.label, url: entry?.audioUrl ?? e.url, kind: e.kind ?? 'audio' };
-    });
-    sendSetToVj({ setId: activeSet.id, name: activeSet.name, items });
-  };
-
-  if (centerTab === 'dj') {
-    return (
-      <button
-        type="button"
-        onClick={sendActiveSetToVj}
-        className="relative w-full h-full overflow-hidden font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 transition-colors bg-cyan-600 hover:bg-cyan-500 text-white"
-        title={isVjSetTargetActive() ? 'Send the active setlist to the VJ performance' : 'Queue the active setlist — delivers when the VJ tab opens'}
-      >
-        <span className="relative z-10 flex items-center gap-2"><Cast className="w-3.5 h-3.5" /> Send to VJ</span>
-      </button>
-    );
-  }
-
-  // On the MIX tab the action button runs the effect CHAIN over the source
-  // (the tab itself has no Process button — the footer is the transport, per
-  // DESIGN_PRINCIPLES §6). Orange echoes the MIX tab accent.
   if (centerTab === 'mix') {
     return (
       <button

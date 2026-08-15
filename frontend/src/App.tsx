@@ -23,28 +23,14 @@ import { useModuleStore } from './state/moduleStore';
 import { useLayoutPrefs } from './state/layoutPrefsStore';
 import { triggerPianoNoteFromMidi } from './lib/pianoTrigger';
 import { publishMidi } from './state/midiBus';
-import { startQuestMidi, stopQuestMidi } from './state/questMidiClient';
-import { startXrControl, stopXrControl, registerXrControlSource } from './state/xrControlClient';
-import { djControlSource } from './state/xrControlDjSource';
-import { makeControlSource } from './state/makeControlSource';
-import { processControlSource } from './state/processControlSource';
-import { liveFxControlSource } from './state/liveFxControlSource';
-import { transportControlSource } from './state/transportControlSource';
-import { swayControlSource, startSwayXrMirror } from './state/swayControlSource';
 import { startSwayBus } from './state/swayBus';
 import { startSwayRouting } from './state/swayRouting';
 import { startSwaySurface, swaySurfaceConsumes } from './state/swaySurface';
 import { startSwayImportDriver } from './state/swayImportStore';
 import { useSwaySurfaceStore } from './state/swaySurfaceStore';
 import { detectProfileFromNames, AUDIMA_SWAY_ID } from './state/controllerProfiles';
-import { poseControlSource, startPoseXrMirror } from './state/poseControlSource';
-import { startPoseRouting } from './state/poseRouting';
-import { startXrViz, stopXrViz } from './state/xrViz';
-import { XrBusTester } from './components/dev/XrBusTester';
 import { useMidiDevicesStore } from './state/midiDevicesStore';
 import { isMidiAudioMuted, useMidiTriggerStore } from './state/midiTriggerStore';
-import { useGanStore } from './state/ganStore';
-import { useProjectStore } from './state/projectStore';
 import { useAppUiStore } from './state/appUiStore';
 
 import './orb-kit/styles/gantasmo-orb.css';
@@ -286,48 +272,11 @@ export default function App() {
     }
   }, [midiInputNames]);
 
-  // Quest MIDI bridge (loopMIDI-free): when MIDI is on, open the WebSocket to
-  // the backend `questmidi` module. It hosts the localhost TCP listener + adb
-  // reverse and relays the headset's MIDI onto the same midiBus as hardware
-  // controllers, so nothing else needs to change to react to the Quest.
-  // XR control bus (spatialization P0/P1 + Foundry bindings): publish theDAW's
-  // control manifest and apply inbound control-sets. UNCONDITIONAL — the bus is
-  // a cheap local WebSocket and its consumers are not MIDI-specific: the
-  // VST-Foundry builder binds canvas controls to these targets regardless of
-  // whether a MIDI device is enabled. Registration is passive (sources
-  // lazy-load their engines on first buildEntries/apply), so this adds nothing
-  // to boot beyond the socket.
-  useEffect(() => {
-    // DJ source maps DJ_TARGETS to spatial controls with no per-control wiring.
-    registerXrControlSource(djControlSource);
-    // Sway (Audima): six expressive dimensions as named 0..1 signals.
-    registerXrControlSource(swayControlSource);
-    // Body-pose source (camera, forwarded from the VJ); pose values arrive via
-    // poseBus regardless of MIDI.
-    registerXrControlSource(poseControlSource);
-    // MAKE (Magenta RT2): live generation params as bindable targets.
-    registerXrControlSource(makeControlSource);
-    // PROCESS (MIX effect chain): drive effect params on the next offline render.
-    registerXrControlSource(processControlSource);
-    // LIVE (master FX): always-available, non-destructive sound shaping on the
-    // player output — the VST-Foundry demo-mode bind-test surface.
-    registerXrControlSource(liveFxControlSource);
-    // Transport: footer play/pause/seek/volume/loop for the phone companion
-    // (Phase 3) and the headset (Phase 7 B1).
-    registerXrControlSource(transportControlSource);
-    startXrControl();
-    return () => {
-      stopXrControl();
-    };
-  }, []);
-
-  // MIDI-specific bridges stay gated: Quest MIDI, the sway CC bus + mirrors,
-  // pose mirror, and the XR visualization feed.
+  // MIDI-specific bridges stay gated: the sway CC bus, routing, and the
+  // Audima Sway control surface.
   useEffect(() => {
     if (!midiEnabled) return;
-    startQuestMidi();
     const stopSway = startSwayBus();
-    const stopSwayMirror = startSwayXrMirror();
     const stopSwayRoute = startSwayRouting();
     // Audima Sway DAW-control mirror: when its mode is on, the device's
     // faders/knobs/pads/play drive theDAW's mixer + transport + pads (the
@@ -336,50 +285,13 @@ export default function App() {
     // Imported-project controller auto-attach: drive the imported tracks/effects
     // from the mappings the source DAW project defined (no-ops with no bindings).
     const stopSwayImport = startSwayImportDriver();
-    // Body-pose source (camera, forwarded from the VJ). Publish its channels on
-    // the same bus; the pose values themselves arrive via poseBus regardless of MIDI.
-    registerXrControlSource(poseControlSource);
-    const stopPoseMirror = startPoseXrMirror();
-    // Stream the visualization feed (waveform pack) over the same bridge so a
-    // theDAW-XR headset can render theDAW's live audio natively.
-    startXrViz();
     return () => {
-      stopQuestMidi();
       stopSway();
-      stopSwayMirror();
       stopSwayRoute();
       stopSwaySurface();
       stopSwayImport();
-      stopPoseMirror();
-      stopXrViz();
     };
   }, [midiEnabled]);
-
-  // Pose routing is camera-driven (forwarded from the VJ), independent of the
-  // Web MIDI gate, so it runs for the app's lifetime.
-  useEffect(() => {
-    const stop = startPoseRouting();
-    return stop;
-  }, []);
-
-  // OS file associations (desktop): a double-clicked .tasmo / .gan is delivered
-  // by the Electron main process; route it to the right opener and show MIX.
-  useEffect(() => {
-    const api = (window as unknown as {
-      electronAPI?: { onOpenFile?: (cb: (filePath: string) => void) => () => void };
-    }).electronAPI;
-    if (!api?.onOpenFile) return;
-    return api.onOpenFile((filePath) => {
-      const lower = filePath.toLowerCase();
-      if (lower.endsWith('.gan')) {
-        void useGanStore.getState().openPath(filePath);
-        useAppUiStore.getState().setCenterTab('mix');
-      } else if (lower.endsWith('.tasmo')) {
-        void useProjectStore.getState().loadPath(filePath);
-        useAppUiStore.getState().setCenterTab('mix');
-      }
-    });
-  }, []);
 
   const handleAssistantAction = useCallback((action: { type: string; payload?: any }) => {
     const result = handletheDAWAction(action);
@@ -444,10 +356,6 @@ export default function App() {
           />
         </Suspense>
       )}
-
-      {/* Dev-only: simulated XR controller to drive the control bus without a
-          headset. Stripped from production builds. */}
-      {import.meta.env.DEV && <XrBusTester />}
 
       {/* Loading screen overlays everything until backend is ready */}
       <AnimatePresence>

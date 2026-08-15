@@ -6,7 +6,6 @@ import type { LibraryEntry } from '../state/libraryEntry';
 import { useLibraryStore } from '../state/libraryStore';
 import { logError } from '../state/logStore';
 import { buildSpectrogramFormData } from '../state/spectrogramRequest';
-import { sunoActions } from '../suno/sunoActions';
 import { HoverTip, InfoTip } from '../components/ui/Tooltip';
 import { formatDuration, formatDate, formatSize } from './catalogFormat';
 import { CatalogueProviderBadge } from './CatalogueProviderBadge';
@@ -207,28 +206,6 @@ export const CatalogueInspector: React.FC<Props> = ({ entry }) => {
           <div className="flex-1" />
           <CatalogueProviderBadge provider={provider} />
         </div>
-
-        {/* Suno-only derive actions */}
-        {sunoActions.canUseAsSunoSource(entry) && (
-          <div className="flex items-center gap-1.5">
-            <HoverTip text="Send this Suno clip to the Suno panel as a COVER source. (Suno tracks only.)">
-              <button
-                className="mono-tag flex-1 bg-purple-500/10! text-purple-300! border-purple-500/30! flex items-center justify-center gap-1"
-                onClick={() => sunoActions.sendToCover(entry)}
-              >
-                <Cloud className="w-2.5 h-2.5" /> Cover
-              </button>
-            </HoverTip>
-            <HoverTip text="Send this Suno clip to the Suno panel as a MASHUP base. (Suno tracks only.)">
-              <button
-                className="mono-tag flex-1 bg-purple-500/10! text-purple-300! border-purple-500/30! flex items-center justify-center gap-1"
-                onClick={() => sunoActions.sendToMashup(entry)}
-              >
-                <Shuffle className="w-2.5 h-2.5" /> Mashup
-              </button>
-            </HoverTip>
-          </div>
-        )}
 
         {/* Core info */}
         <div className="flex flex-col">

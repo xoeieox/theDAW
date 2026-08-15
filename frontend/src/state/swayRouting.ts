@@ -3,13 +3,11 @@
  *
  * Each dimension can bind to one target; when the dimension's normalized value
  * changes, the bound target is driven (scaled into its [min,max] for ranges,
- * thresholded for toggles, rising-edge for pads). Today the catalogue is
- * DJ_TARGETS, so a Sway can drive DJ controls hands-on; VJ, MAKE, and vocal
- * targets join the picker as their catalogues land, and the unified Show Designer
- * matrix can later subsume this scoped engine.
+ * thresholded for toggles, rising-edge for pads). The catalogues are MAKE
+ * (generation params) and PROCESS (effect-chain params).
  *
- * The DJ catalogue (and through it djEngine) is imported lazily, so this stays out
- * of app boot and only loads when a Sway target is wired or the panel opens.
+ * The catalogues are imported lazily, so this stays out of app boot and only
+ * loads when a Sway target is wired or the panel opens.
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -23,18 +21,17 @@ function loadTargets(): Promise<BindableTarget[]> {
   if (targetCache) return Promise.resolve(targetCache);
   if (!targetLoad) {
     targetLoad = Promise.all([
-      import('./bindableTargets'),
       import('./makeTargets'),
       import('./processTargets'),
-    ]).then(([dj, make, proc]) => {
-      targetCache = [...dj.DJ_TARGETS, ...make.MAKE_TARGETS, ...proc.PROCESS_TARGETS];
+    ]).then(([make, proc]) => {
+      targetCache = [...make.MAKE_TARGETS, ...proc.PROCESS_TARGETS];
       return targetCache;
     });
   }
   return targetLoad;
 }
 
-/** Targets a Sway dimension can route to (lazy-loads the DJ catalogue). */
+/** Targets a Sway dimension can route to (lazy-loads the catalogues). */
 export function loadSwayTargets(): Promise<BindableTarget[]> {
   return loadTargets();
 }

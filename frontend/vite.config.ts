@@ -47,13 +47,8 @@ export default defineConfig(({mode}) => {
       // Modern output → less transpilation across the ~3.5k modules.
       target: 'es2022',
       rollupOptions: {
-        // Two entries: the desktop app (index.html) and the phone companion
-        // (mobile.html -> src/mobile/main.tsx). The mobile tree never imports
-        // three/alphaTab/force-graph, so its chunk stays small; the phone never
-        // downloads the desktop bundle.
         input: {
           main: path.resolve(__dirname, 'index.html'),
-          mobile: path.resolve(__dirname, 'mobile.html'),
         },
         output: {
           // Split the big, stable leaf vendors into their own long-cached
@@ -91,7 +86,7 @@ export default defineConfig(({mode}) => {
         '/api': {
           target: 'http://localhost:8600',
           changeOrigin: true,
-          ws: true, // proxy WebSocket upgrades too (e.g. /api/questmidi/ws)
+          ws: true, // proxy WebSocket upgrades too
           timeout: 0,
           proxyTimeout: 0,
           configure: (proxy) => {
@@ -109,13 +104,6 @@ export default defineConfig(({mode}) => {
               }
             });
           },
-        },
-        // The VJ tab embeds the backend-served static VJ build (vite base
-        // '/vj-app/'). Proxy it to the backend so the iframe loads it
-        // same-origin in dev, exactly as it already is in packaged/Docker.
-        '/vj-app': {
-          target: 'http://localhost:8600',
-          changeOrigin: true,
         },
       },
       hmr: process.env.ENABLE_HMR === 'true',

@@ -30,65 +30,17 @@ COPY frontend/ ./
 RUN npm run build
 
 ########################################################################
-# Stage 1b: VJ (gantasmo/VJ-9000) static build.
-#
-# The VJ app is a separate repo, so it is cloned and built here rather than
-# copied from the build context. Its vite base is '/vj-app/' (for the build
-# command), so the backend can mount the compiled dist at /vj-app and serve it
-# with no Node.js at runtime. Override the source with VJ_REPO / VJ_REF.
-########################################################################
-FROM node:22.23.1-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS vj
-WORKDIR /build/vj
-# ca-certificates is required alongside git: the slim base ships no CA bundle,
-# so the HTTPS clone of VJ-9000 below fails certificate verification without it.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-ARG VJ_REPO=https://github.com/gantasmo/VJ-9000.git
-# VJ branch carrying the '/vj-app/' build base, PINNED to a commit so image
-# builds are reproducible and survive the branch being merged/deleted.
-# KEEP IN SYNC with VJ_COMMIT in electron-ui/scripts/fetch-vj-build.mjs.
-ARG VJ_REF=feat/vj-redesign-vfx
-ARG VJ_COMMIT=ff7430b1bf66524cc30e509b56f1e743443798fb
-RUN --mount=type=cache,target=/root/.npm \
-    git clone --branch "${VJ_REF}" "${VJ_REPO}" . \
-    && git checkout --detach "${VJ_COMMIT}" \
-    && npm ci \
-    && npm run build
-
-########################################################################
-# Stage 1c: VST Foundry fullstack build.
-#
-# Foundry is an in-repo Node/Express app. Build it from the context, then prune
-# to production deps so the runtime stage ships only what `node dist/server.cjs`
-# needs. Package files are copied first so source edits don't bust the npm cache.
-########################################################################
-FROM node:22.23.1-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS foundry
-WORKDIR /build/foundry
-COPY VST-Foundry-UI/VST-UI-FOUNDRY/package.json VST-Foundry-UI/VST-UI-FOUNDRY/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
-COPY VST-Foundry-UI/VST-UI-FOUNDRY/ ./
-RUN npm run build && npm prune --omit=dev
-
-########################################################################
 # Stage 2: Python runtime.
 ########################################################################
 FROM python:3.10-slim-bookworm@sha256:89cef4d55961e885def21b86e34e102e65b7eab8cd281e806a66ff1709c9a455 AS runtime
-
-# Node.js runtime for the VST Foundry sidecar (it runs `node dist/server.cjs`).
-# The single binary is copied from the official node image; libstdc++6 is the
-# one shared lib the slim python base lacks that node links against.
-COPY --from=node:22.23.1-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 /usr/local/bin/node /usr/local/bin/node
 
 # The uv binary is copied from the official distroless image. The tag is
 # pinned; bump it deliberately, never float on :latest.
 COPY --from=ghcr.io/astral-sh/uv:0.11.26 /uv /uvx /bin/
 
-# ffmpeg backs yt-dlp, loudness metering, and delivery encodes.
-# build-essential is required because aubio 0.4.9 ships as an sdist and
-# compiles at install time. git supports optional VCS installs such as the
-# py-aup3 Audacity parser. libglib2.0-0 satisfies opencv-python-headless on
-# slim images.
+# ffmpeg backs loudness metering and audio conversion. build-essential is
+# required because aubio 0.4.9 ships as an sdist and compiles at install
+# time on platforms without a prebuilt wheel.
 # apt-get upgrade patches fixable Debian CVEs in the digest-pinned base at
 # build time (the base is immutable via @sha256, but its repos still serve
 # current security updates). Kept in the same layer as install + cleanup.
@@ -98,7 +50,6 @@ RUN apt-get update \
         ffmpeg \
         build-essential \
         git \
-        libglib2.0-0 \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -113,21 +64,13 @@ ENV PYTHONUNBUFFERED=1 \
 # group holds only pytest and ruff, so --no-dev is a verified reduction, not
 # a guess. theDAW.bat runs "uv sync --group dev" on developer machines only
 # to add those tools.
-#
-# pyk4a-bundle (the Azure Kinect point-cloud backend for the akvj module) is
-# skipped in the container: its only Linux wheel is manylinux_2_38 (glibc
-# >= 2.38) and this digest-pinned bookworm base ships glibc 2.36, so uv cannot
-# install it here. The container has no Kinect device anyway, and the akvj
-# sidecar imports pyk4a lazily (inside functions / via a subprocess probe), so
-# the backend boots fine without it. The dependency stays in pyproject/uv.lock
-# with its win32-or-linux-x86_64 marker so bare-metal Linux installs keep it.
 COPY pyproject.toml uv.lock .python-version ./
 # Prebuilt aubio wheels referenced by uv.lock's [tool.uv.sources] path entries.
 # On linux x86_64 the marker-matched manylinux wheel is what this build installs,
 # so it must be present in the context or `uv sync --frozen` fails on the path.
 COPY wheels/ ./wheels/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --no-install-package pyk4a-bundle
+    uv sync --frozen --no-dev --no-install-project
 
 # README.md is required because pyproject.toml declares it as the project
 # readme and the project install builds metadata from it.
@@ -142,27 +85,13 @@ COPY docs/ ./docs/
 COPY frontend/public/USER_GUIDE.md ./frontend/public/USER_GUIDE.md
 
 # The second sync installs the project itself against the already-cached
-# dependency set. pyk4a-bundle is skipped for the same reason as the first sync
-# (glibc 2.38 wheel vs the base's glibc 2.36; no Kinect device in the container).
+# dependency set.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-package pyk4a-bundle
+    uv sync --frozen --no-dev
 
 # The built SPA lands where backend/server.py expects it
 # (PROJECT_ROOT/frontend/dist) for the theDAW_SERVE_UI mount.
 COPY --from=ui /build/frontend/dist ./frontend/dist
-
-# The VJ static build lands at /app/vj-dist, which the backend's VJ sidecar
-# resolves (_REPO_ROOT/"vj-dist") and mounts at /vj-app. This removes the VJ
-# tab's Node.js requirement, so it works in the container like anywhere else.
-COPY --from=vj /build/vj/dist ./vj-dist
-
-# The VST Foundry production bundle lands where the foundry sidecar resolves it
-# (_REPO_ROOT/"VST-Foundry-UI"/"VST-UI-FOUNDRY"). It runs `node dist/server.cjs`
-# with the node binary copied above — a fullstack Node app, so it ships dist/ +
-# production node_modules + package.json.
-COPY --from=foundry /build/foundry/dist ./VST-Foundry-UI/VST-UI-FOUNDRY/dist
-COPY --from=foundry /build/foundry/node_modules ./VST-Foundry-UI/VST-UI-FOUNDRY/node_modules
-COPY --from=foundry /build/foundry/package.json ./VST-Foundry-UI/VST-UI-FOUNDRY/package.json
 
 # The RAG embedder (all-MiniLM-L6-v2) is baked into the image at a path that
 # is INSIDE the image and is never shadowed by a volume mount. backend/rag.py

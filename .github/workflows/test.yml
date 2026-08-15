@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  pull_request:
+
+# Runs the Python test suite on every pull request. Upstream shipped 36 test
+# files that no workflow ever executed; the operating-table strip turned them
+# on. The locked linux x86_64 resolution pins torch from the PyTorch cu126
+# index (the wheels bundle the CUDA userspace libraries, so they install fine
+# on a CPU-only runner — CUDA is simply unavailable at runtime and the code
+# paths that need it are guarded).
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+      - name: Run tests
+        run: uv run pytest -q

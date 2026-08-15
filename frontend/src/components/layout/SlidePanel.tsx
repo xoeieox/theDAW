@@ -37,7 +37,6 @@ import {
   type StackMedia,
 } from '../../state/slideStore';
 import { useMediaBucketStore } from '../../state/mediaBucketStore';
-import { loadStackMedia, refreshStack } from '../../state/controlSyncBus';
 import {
   CONTROLLER_PROFILES,
   profileById,
@@ -53,7 +52,6 @@ import { audioCatalog, startAudioMixerSync, PAN_SUFFIX } from '../../state/audio
 import { subscribeToMidi } from '../../state/midiBus';
 import { useMidiDevicesStore } from '../../state/midiDevicesStore';
 import { useLearnedProfilesStore } from '../../state/learnedProfilesStore';
-import { ControllerVisionModal } from './ControllerVisionModal';
 import { enableMidi } from '../../state/midiTriggerStore';
 import {
   useControllerMapStore,
@@ -232,13 +230,9 @@ const StackLane: React.FC<{ stackId: string }> = ({ stackId }) => {
         mapping={summary}
       />
       {stack.media && (
-        <button
-          className="sl-stack-media"
-          title={`Load "${stack.media.label}" into the VJ`}
-          onClick={() => loadStackMedia(stack)}
-        >
+        <span className="sl-stack-media" title={stack.media.label}>
           <Film className="w-2.5 h-2.5" /> {stack.media.label}
-        </button>
+        </span>
       )}
       {editing && <StackEditor stack={stack} onClose={() => setEditing(false)} />}
     </div>
@@ -273,16 +267,13 @@ const StackEditor: React.FC<{ stack: StackBinding; onClose: () => void }> = ({ s
   const addTarget = () => {
     const firstKey = visualControls[0]?.key ?? '';
     updateStack(stack.id, { targets: [...stack.targets, { key: firstKey, fromPct: 0, toPct: 100 }] });
-    refreshStack(stack.id);
   };
   const updateTarget = (i: number, patch: Partial<StackBinding['targets'][number]>) => {
     const targets = stack.targets.map((t, idx) => (idx === i ? { ...t, ...patch } : t));
     updateStack(stack.id, { targets });
-    refreshStack(stack.id);
   };
   const removeTarget = (i: number) => {
     updateStack(stack.id, { targets: stack.targets.filter((_, idx) => idx !== i) });
-    refreshStack(stack.id);
   };
 
   return (
@@ -580,7 +571,6 @@ export const SlidePanel: React.FC = () => {
   const startLearn = useLearnedProfilesStore((s) => s.start);
   const cancelLearn = useLearnedProfilesStore((s) => s.cancel);
   const commitLearn = useLearnedProfilesStore((s) => s.commit);
-  const [cvOpen, setCvOpen] = useState(false);
   // Controller-view zoom — lets a big device (e.g. a 92-control rig) be seen
   // whole (the view OPENS fitted to the window) or a section worked up close.
   const [ctrlZoom, setCtrlZoom] = useState(1);
@@ -1024,7 +1014,6 @@ export const SlidePanel: React.FC = () => {
             detectedName={detected?.name ?? null}
             hasDevice={midiInputs.length > 0}
             onToggleAuto={() => setAutoDetect(!autoDetect)}
-            onIdentify={() => setCvOpen(true)}
             onLearn={() => { enableMidi(); startLearn(); }}
             onMap={() => { setView('controller'); setBank(0); setMapMode(true); }}
           />
@@ -1167,12 +1156,6 @@ export const SlidePanel: React.FC = () => {
         )}
       </div>
 
-      {cvOpen && (
-        <ControllerVisionModal
-          onClose={() => setCvOpen(false)}
-          onBuilt={(id) => { setProfileId(id); setAutoDetect(false); setBank(0); setCvOpen(false); }}
-        />
-      )}
     </div>
   );
 };
@@ -1223,10 +1206,9 @@ const DeviceSetupMenu: React.FC<{
   detectedName: string | null;
   hasDevice: boolean;
   onToggleAuto: () => void;
-  onIdentify: () => void;
   onLearn: () => void;
   onMap: () => void;
-}> = ({ autoDetect, detectedName, hasDevice, onToggleAuto, onIdentify, onLearn, onMap }) => {
+}> = ({ autoDetect, detectedName, hasDevice, onToggleAuto, onLearn, onMap }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -1259,13 +1241,6 @@ const DeviceSetupMenu: React.FC<{
               <span className="block text-[8px] text-zinc-500">
                 {autoDetect ? (detectedName ? `On — matched ${detectedName}` : hasDevice ? 'On — no match for connected device' : 'On — waiting for a device') : 'Match a profile from the connected device name'}
               </span>
-            </span>
-          </button>
-          <button onClick={close(onIdentify)} className={item}>
-            <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-300" />
-            <span className="min-w-0">
-              <span className="block text-[10px] font-bold text-zinc-100">Identify by photo (AI)</span>
-              <span className="block text-[8px] text-zinc-500">Snap/upload a photo — AI names it + builds the layout. Most accurate.</span>
             </span>
           </button>
           <button onClick={close(onLearn)} className={item}>

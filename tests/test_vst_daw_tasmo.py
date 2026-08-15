@@ -1,24 +1,10 @@
-"""Smoke tests for the VST / DAW import / .tasmo modules."""
+"""Smoke tests for the VST hosting and .tasmo project modules."""
 
 import sys
 import os
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-
-def test_daw_models():
-    from backend.modules.dawimport.models import DawProject, DawTrack
-
-    p = DawProject(source_daw="ableton", name="Test Project", tempo=140.0)
-    assert p.source_daw == "ableton"
-    assert p.tempo == 140.0
-    assert p.tracks == []
-    t = DawTrack(name="Kick", type="audio", volume_db=-3.0)
-    p.tracks.append(t)
-    d = p.to_dict()
-    assert d["tracks"][0]["name"] == "Kick"
-    print("  models OK")
 
 
 def test_tasmo_project():
@@ -149,100 +135,11 @@ def test_vst_host():
         print("  Built-in effects: skipped (pedalboard not installed)")
 
 
-def test_ableton_parser_structure():
-    from backend.modules.dawimport.ableton import parse_als
-
-    # Can't test without a real .als file, but verify the function exists
-    assert callable(parse_als)
-    print("  ableton.parse_als callable OK")
-
-
-def test_reaper_parser_structure():
-    from backend.modules.dawimport.reaper import parse_rpp
-
-    assert callable(parse_rpp)
-    print("  reaper.parse_rpp callable OK")
-
-
-def test_logic_parser_structure():
-    from backend.modules.dawimport.logic import parse_logicx, export_hint
-
-    assert callable(parse_logicx)
-    hint = export_hint()
-    assert hint["format"] == "logicx"
-    assert "recommended_workflow" in hint
-    print("  logic.export_hint OK")
-
-
-def test_fl_studio_parser_structure():
-    from backend.modules.dawimport.fl_studio import parse_flp
-
-    assert callable(parse_flp)
-    print("  fl_studio.parse_flp callable OK")
-
-
-def test_audacity_parser_structure():
-    from backend.modules.dawimport.audacity import parse_aup3
-
-    assert callable(parse_aup3)
-    print("  audacity.parse_aup3 callable OK")
-
-
-def test_audition_parser_structure():
-    from backend.modules.dawimport.audition import parse_sesx
-
-    assert callable(parse_sesx)
-    print("  audition.parse_sesx callable OK")
-
-
-def test_bitwig_parser_structure():
-    from backend.modules.dawimport.bitwig import parse_bwproject
-
-    assert callable(parse_bwproject)
-    print("  bitwig.parse_bwproject callable OK")
-
-
-def test_resolume_parser_structure():
-    from backend.modules.dawimport.resolume import parse_avc
-
-    assert callable(parse_avc)
-    print("  resolume.parse_avc callable OK")
-
-
-def test_detect_all_formats():
-    from backend.modules.dawimport.router import router as dawimport_router
-
-    assert hasattr(dawimport_router, "routes")
-    routes = [r.path for r in dawimport_router.routes]
-    assert "/detect" in routes
-    assert "/ableton" in routes
-    assert "/reaper" in routes
-    assert "/logic" in routes
-    assert "/fl-studio" in routes
-    assert "/audacity" in routes
-    assert "/audition" in routes
-    assert "/bitwig" in routes
-    assert "/resolume" in routes
-    assert "/cubase/export-hint" in routes
-    assert "/pro-tools/export-hint" in routes
-    print(f"  dawimport routes: {len(routes)} endpoints OK")
-
-
 if __name__ == "__main__":
-    print("Running VST / DAW import / .tasmo smoke tests...")
-    test_daw_models()
+    print("Running VST / .tasmo smoke tests...")
     test_tasmo_project()
     test_tasmo_file_roundtrip()
     test_tasmo_embed_roundtrip()
     test_vst_scanner()
     test_vst_host()
-    test_ableton_parser_structure()
-    test_reaper_parser_structure()
-    test_logic_parser_structure()
-    test_fl_studio_parser_structure()
-    test_audacity_parser_structure()
-    test_audition_parser_structure()
-    test_bitwig_parser_structure()
-    test_resolume_parser_structure()
-    test_detect_all_formats()
     print("\nAll tests passed!")
