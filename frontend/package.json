@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "node --test src/lib/inpaintAccept.test.ts",
     "screenshots": "tsx ../scripts/screenshots/capture.ts",
     "docs:coverage": "tsx ../scripts/screenshots/featureCoverage.ts"
   },

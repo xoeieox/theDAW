@@ -18,6 +18,11 @@ import { AutomationLane } from './AutomationLane';
 import { RACK_EFFECTS, getRackEffect, buildEffectChain, ensureChopModule, teleportXYZ, SPATIAL_TELEPORT, type ChainHandle } from '../../lib/rackEffects';
 import { sliceChunks } from '../../lib/audioAnalysis';
 import { encodeWav, encodeWavFloat32 } from '../../lib/wavEncode';
+import {
+  resolveInpaintAccept,
+  snapshotInpaintGeometry,
+  type InpaintGeometrySnapshot,
+} from '../../lib/inpaintAccept';
 import type { AudioDragItem } from '../../lib/audioDnD';
 import { useExternalDragStore } from '../../state/externalDragStore';
 import { useEditorStore, computePeaks, sampleLane, type AudioClip, type EditorTrack, type SnapDivision, type AutomationTarget, type AutomationLane as AutomationLaneT, type TimelineMarker } from '../../state/editorStore';
@@ -830,7 +835,7 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
       const blob = new Blob([await res.arrayBuffer()], { type: 'audio/wav' });
       const { peaks, duration } = await computePeaks(blob, 240);
       updateClip(clipId, {
-        audioBlob: blob, mimeType: 'audio/wav', offsetIntoSource: 0, durationSec: duration, peaks,
+        audioBlob: blob, mimeType: 'audio/wav', offsetIntoSource: 0, sourceDuration: duration, durationSec: duration, peaks,
       });
       logInfo('editor', `Time/Pitch: ${tempo.toFixed(2)}x, ${semitones >= 0 ? '+' : ''}${semitones} st -> ${duration.toFixed(2)}s`);
     } catch (e) {
@@ -852,8 +857,8 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
   // --- Inpaint panel state ---
   type InpaintPhase =
     | { kind: 'params' }
-    | { kind: 'generating'; jobId: string }
-    | { kind: 'review'; blob: Blob; blobUrl: string };
+    | { kind: 'generating'; jobId: string; snapshot: InpaintGeometrySnapshot }
+    | { kind: 'review'; blob: Blob; blobUrl: string; snapshot: InpaintGeometrySnapshot };
   const [inpaintPanel, setInpaintPanel] = useState<InpaintPhase | null>(null);
   // When set, the LibraryMidiPicker is open; `sec` is the drop time, x/y anchor the panel.
   const [midiDrop, setMidiDrop] = useState<{ sec: number; x: number; y: number } | null>(null);
@@ -896,7 +901,7 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
   // Drive polling reactively: starts when phase is 'generating', stops on cleanup.
   useEffect(() => {
     if (inpaintPanel?.kind !== 'generating') return;
-    const { jobId } = inpaintPanel;
+    const { jobId, snapshot } = inpaintPanel;
     const intervalId = setInterval(() => {
       void (async () => {
         try {
@@ -908,7 +913,7 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
             const arr = new Uint8Array(bytes.length);
             for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
             const blob = new Blob([arr], { type: mime_type });
-            setInpaintPanel({ kind: 'review', blob, blobUrl: URL.createObjectURL(blob) });
+            setInpaintPanel({ kind: 'review', blob, blobUrl: URL.createObjectURL(blob), snapshot });
           } else if (job.status === 'failed') {
             logError('editor', `Inpaint job failed: ${job.error ?? 'unknown'}`);
             setInpaintPanel({ kind: 'params' });
@@ -969,21 +974,55 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
         logError('editor', 'Inpaint submit: no job id in response');
         return;
       }
-      setInpaintPanel({ kind: 'generating', jobId });
+      // Snapshot the geometry the crop was cut against: the job polls while
+      // the user is free to keep editing, and accept must refuse a result
+      // that no longer matches the clip (see lib/inpaintAccept).
+      setInpaintPanel({ kind: 'generating', jobId, snapshot: snapshotInpaintGeometry(clip) });
     } catch (e) {
       logError('editor', `Inpaint submit failed: ${e instanceof Error ? e.message : e}`);
     }
   };
 
-  const acceptInpaint = (blob: Blob) => {
+  const acceptInpaint = async (blob: Blob, snapshot: InpaintGeometrySnapshot) => {
     const sel = useEditorStore.getState().inpaintSelection;
     if (!sel) return;
-    // Carry the response's actual mime type (the job poller sets it from the
-    // backend's mime_type) instead of hardcoding WAV.
-    const mimeType = blob.type || 'audio/wav';
-    updateClip(sel.clipId, { audioBlob: blob, mimeType, peaks: undefined });
 
-    // Auto-save the accepted inpaint to the library (via the storage provider).
+    // Decode the returned blob for its TRUE duration rather than assuming the
+    // clip's — duration rounding in the model path can shift it, and a stale
+    // sourceDuration is exactly the defect this path had.
+    let decodedDuration: number;
+    const tmpCtx = new AudioContext({ sampleRate: 44100 });
+    try {
+      const buf = await tmpCtx.decodeAudioData(await blob.arrayBuffer());
+      decodedDuration = buf.duration;
+    } catch (e) {
+      logError('editor', `Inpaint accept: result failed to decode: ${e instanceof Error ? e.message : e}`);
+      return;
+    } finally {
+      tmpCtx.close().catch(() => {});
+    }
+
+    // Refuse a stale accept: the blob was cropped against pre-submit geometry,
+    // and the clip can be edited while the job polls.
+    const clipNow = useEditorStore.getState().clips.find((c) => c.id === sel.clipId);
+    const resolution = resolveInpaintAccept(clipNow, snapshot, decodedDuration);
+    if (resolution.ok === false) {
+      logError('editor', `Inpaint accept refused: ${resolution.reason}`);
+      setInpaintPanel(null);
+      return;
+    }
+
+    // Carry the response's actual mime type (the job poller sets it from the
+    // backend's mime_type) instead of hardcoding WAV. The blob starts at 0 and
+    // IS the whole source now: offset resets, both durations come from the
+    // decoded audio (updateClip is a shallow partial merge; decoded buffers
+    // are WeakMap-keyed by Blob identity, so the new Blob re-decodes on play).
+    const mimeType = blob.type || 'audio/wav';
+    updateClip(sel.clipId, { audioBlob: blob, mimeType, ...resolution.patch });
+
+    // Auto-save the accepted inpaint to the library (via the storage provider)
+    // and repoint the clip at the NEW entry — leaving it on the pre-repaint
+    // entry made the BPM/key readout describe the old audio.
     void useLibraryStore.getState().importEntry({
       blob,
       filename: `inpaint_${inpaintPrompt.slice(0, 15) || 'result'}.wav`,
@@ -999,6 +1038,8 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
         source: 'generate',
         tags: ['inpaint'],
       },
+    }).then((entry) => {
+      updateClip(sel.clipId, { libraryEntryId: entry.id });
     }).catch((e) => logError('editor', `Inpaint library save failed: ${e}`));
 
     clearInpaintSelection();
@@ -3719,7 +3760,7 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
               <audio controls src={inpaintPanel.blobUrl} className="w-full h-8 mt-1" />
               <div className="flex gap-2">
                 <button
-                  onClick={() => acceptInpaint(inpaintPanel.blob)}
+                  onClick={() => void acceptInpaint(inpaintPanel.blob, inpaintPanel.snapshot)}
                   className="flex-1 py-1.5 rounded bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 text-[9px] font-black uppercase tracking-widest hover:bg-emerald-600/50 transition-colors"
                 >
                   Accept
