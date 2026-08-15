@@ -17,7 +17,7 @@ import { MAGENTA_TOOLS, magentaToolById, type MagentaTool } from '../../lib/mage
 import { AutomationLane } from './AutomationLane';
 import { RACK_EFFECTS, getRackEffect, buildEffectChain, ensureChopModule, teleportXYZ, SPATIAL_TELEPORT, type ChainHandle } from '../../lib/rackEffects';
 import { sliceChunks } from '../../lib/audioAnalysis';
-import { encodeWav } from '../../lib/wavEncode';
+import { encodeWav, encodeWavFloat32 } from '../../lib/wavEncode';
 import type { AudioDragItem } from '../../lib/audioDnD';
 import { useExternalDragStore } from '../../state/externalDragStore';
 import { useEditorStore, computePeaks, sampleLane, type AudioClip, type EditorTrack, type SnapDivision, type AutomationTarget, type AutomationLane as AutomationLaneT, type TimelineMarker } from '../../state/editorStore';
@@ -126,7 +126,10 @@ const cropAudioBlob = async (
     src.connect(offline.destination);
     src.start(0, safeOffset, safeDur);
     const rendered = await offline.startRendering();
-    return encodeWav(rendered);
+    // Float32, not 16-bit: this crop is the repaint submit path, and the
+    // audio outside the repainted region comes back bit-identical — a 16-bit
+    // encode here would quantise the whole clip once per repaint pass.
+    return encodeWavFloat32(rendered);
   } finally {
     tmpCtx.close().catch(() => {});
   }
@@ -975,13 +978,16 @@ export const WaveformEditor: React.FC<{ onSwitchTab?: (tab: string) => void }> =
   const acceptInpaint = (blob: Blob) => {
     const sel = useEditorStore.getState().inpaintSelection;
     if (!sel) return;
-    updateClip(sel.clipId, { audioBlob: blob, mimeType: 'audio/wav', peaks: undefined });
-    
+    // Carry the response's actual mime type (the job poller sets it from the
+    // backend's mime_type) instead of hardcoding WAV.
+    const mimeType = blob.type || 'audio/wav';
+    updateClip(sel.clipId, { audioBlob: blob, mimeType, peaks: undefined });
+
     // Auto-save the accepted inpaint to the library (via the storage provider).
     void useLibraryStore.getState().importEntry({
       blob,
       filename: `inpaint_${inpaintPrompt.slice(0, 15) || 'result'}.wav`,
-      mimeType: 'audio/wav',
+      mimeType,
       metadata: {
         title: `inpaint_${inpaintPrompt.slice(0, 15) || 'result'}.wav`,
         prompt: inpaintPrompt,

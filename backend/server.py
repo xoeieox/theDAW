@@ -1316,13 +1316,49 @@ def _generate_to_bytes(
     output_sample_rate = int(
         generation_pipeline.model_config.get("sample_rate", sample_rate)
     )
+
+    # Region repaint: the model receives the mask + masked audio as
+    # CONDITIONING ONLY and returns a full-length reconstruction from pure
+    # noise, so nothing outside the mask is preserved by the model itself.
+    # Composite the original audio back outside the mask with an equal-power
+    # feather at each boundary (backend/lib/inpaint_composite.py) — this is
+    # what makes the untouched audio bit-identical and the seam inaudible.
+    # Composite in the ORIGINAL's domain (its sample rate and channel count),
+    # so the guard below also switches the saved sample rate to the input's.
+    inpaint_tuple = generate_args.get("inpaint_audio")
+    mask_start = generate_args.get("inpaint_mask_start_seconds")
+    mask_end = generate_args.get("inpaint_mask_end_seconds")
+    is_inpaint = (
+        inpaint_tuple is not None and mask_start is not None and mask_end is not None
+    )
+    if is_inpaint:
+        from backend.lib.inpaint_composite import composite_inpaint
+
+        in_sr, in_wave = inpaint_tuple
+        composited = composite_inpaint(
+            in_wave.to(torch.float32).cpu().numpy(),
+            audio.numpy(),
+            sample_rate=int(in_sr),
+            mask_start_sec=float(mask_start),
+            mask_end_sec=float(mask_end),
+            generated_sample_rate=output_sample_rate,
+        )
+        audio = torch.from_numpy(composited)
+        output_sample_rate = int(in_sr)
+
     buf = io.BytesIO()
-    # Save as PCM_16 instead of the default 32-bit float for WAV outputs —
-    # halves the on-disk footprint with no perceptible quality cost on
-    # generative audio. FLAC handles its own efficient encoding.
     save_kwargs: dict = {}
     if fmt == "wav":
-        save_kwargs.update(encoding="PCM_S", bits_per_sample=16)
+        if is_inpaint:
+            # Repaint path: 32-bit float. The operating table repaints the
+            # same material repeatedly and every accepted pass round-trips
+            # through this encoder — 16-bit would quantise once per pass.
+            save_kwargs.update(encoding="PCM_F", bits_per_sample=32)
+        else:
+            # One-shot generation: PCM_16 halves the on-disk footprint with
+            # no perceptible quality cost on generative audio. FLAC handles
+            # its own efficient encoding.
+            save_kwargs.update(encoding="PCM_S", bits_per_sample=16)
     # torchaudio.save accepts file-like objects at runtime; its stub only
     # declares str | PathLike, hence the cast.
     torchaudio.save(
